@@ -1,0 +1,67 @@
+{
+  "name": "majestic-rp-proton-linux-patch",
+  "version": "1.0.0",
+  "description": "Majestic RP Linux Proton patch for Majestic Launcher, GTA V Legacy, Rockstar Launcher, Moretti Club server LAS VEGAS, Ubuntu, Fedora, Arch, Steam Deck, Flatpak Steam and Snap Steam.",
+  "main": "majestic-proton-js-patcher.js",
+  "homepage": "https://moretti.club/",
+  "private": true,
+  "license": "MIT",
+  "author": "Community patch",
+  "type": "commonjs",
+  "bin": {
+    "majestic-proton-js-patcher": "./majestic-proton-js-patcher.js"
+  },
+  "scripts": {
+    "check": "bash -n install-and-run-majestic-proton.sh && node --check majestic-proton-js-patcher.js",
+    "start": "./install-and-run-majestic-proton.sh"
+  },
+  "keywords": [
+    "majestic-rp",
+    "majestic-launcher",
+    "majestic-rp-linux",
+    "majestic-rp-ubuntu",
+    "majestic-rp-fedora",
+    "majestic-rp-arch",
+    "majestic-rp-steam-deck",
+    "majestic-rp-proton",
+    "majestic-launcher-linux",
+    "majestic-launcher-proton",
+    "majestic-launcher-app-asar",
+    "majestic-gamepatcher",
+    "gta-v-linux",
+    "gta-5-linux",
+    "gta-v-proton",
+    "gta5-proton",
+    "grand-theft-auto-v-linux",
+    "steam-proton",
+    "steam-deck",
+    "proton",
+    "proton-prefix",
+    "proton-compatdata",
+    "linux-gaming",
+    "ubuntu",
+    "debian",
+    "linux-mint",
+    "fedora",
+    "arch-linux",
+    "manjaro",
+    "flatpak-steam",
+    "snap-steam",
+    "app-asar",
+    "asar-patch",
+    "electron-patcher",
+    "rockstar-launcher",
+    "rockstar-launcher-proton",
+    "gta-v-legacy",
+    "moretti-club",
+    "moretti-vegas",
+    "moretti-las-vegas",
+    "server-las-vegas"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@electron/asar": "^3.4.1"
+  }
+}
