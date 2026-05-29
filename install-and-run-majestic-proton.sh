@@ -20,6 +20,7 @@ MAJESTIC_PLATFORM="${MAJESTIC_PLATFORM:-rgl}"
 GTA_WINE_DRIVE="${GTA_WINE_DRIVE:-g}"
 MAJESTIC_PERMISSIONS="${MAJESTIC_PERMISSIONS:-1,3,4}"
 RESET_ROCKSTAR_DOCUMENTS="${RESET_ROCKSTAR_DOCUMENTS:-0}"
+PROTON_VERB="${PROTON_VERB:-runinprefix}"
 APP_ID="${APP_ID:-}"
 
 log() { printf '[majestic-proton] %s\n' "$*"; }
@@ -37,6 +38,13 @@ check_base_dependencies() {
   require_command perl "Ubuntu/Debian: perl; Fedora: perl; Arch: perl"
   require_command sed "Ubuntu/Debian: sed; Fedora: sed; Arch: sed"
   require_command find "Ubuntu/Debian: findutils; Fedora: findutils; Arch: findutils"
+}
+
+validate_proton_verb() {
+  case "$PROTON_VERB" in
+    run|waitforexitandrun|runinprefix) ;;
+    *) die "Unsupported PROTON_VERB='$PROTON_VERB'. Use runinprefix, run or waitforexitandrun." ;;
+  esac
 }
 
 backup_file() {
@@ -318,6 +326,7 @@ patch_asar_app() {
 }
 
 check_base_dependencies
+validate_proton_verb
 
 STEAM_ROOT="$(find_steam_root)"
 GTA_PATH="$(find_gta_path)"
@@ -368,5 +377,5 @@ export MAJESTIC_GTA_WIN_PATH="${GTA_WINE_DRIVE^^}:\\"
 export MAJESTIC_DISABLE_CEF_GPU="$DISABLE_CEF_GPU"
 
 cd "$MAJESTIC_DIR"
-log "Starting Majestic Launcher..."
-exec "$PROTON" waitforexitandrun "$MAJESTIC_EXE"
+log "Starting Majestic Launcher with Proton verb: $PROTON_VERB"
+exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE"
