@@ -15,6 +15,7 @@ const mainDir = path.join(root, "dist", "electron", "main");
 const indexPath = path.join(mainDir, "index.js");
 const workerPath = path.join(mainDir, "gamePatcher.js");
 const marker = "MAJESTIC_PROTON_PATCH_V2";
+const workerHookMarker = "MAJESTIC_PROTON_WORKER_HOOK_V3";
 
 function read(file) {
   return fs.readFileSync(file, "utf8");
@@ -30,11 +31,40 @@ function patchIndex() {
   }
 
   let src = read(indexPath);
-  if (src.includes(marker)) {
+  if (src.includes(marker) || src.includes(workerHookMarker)) {
     return;
   }
+
+  const workerHook = `/* ${marker}: ${workerHookMarker}; redirect gamePatcher.js workers to app.asar.unpacked under Proton. */
+(() => {
+  try {
+    const path = require("path");
+    const fs = require("fs");
+    const workerThreads = require("worker_threads");
+    if (!workerThreads || !workerThreads.Worker || workerThreads.Worker.__majesticProtonPatched) return;
+    const OriginalWorker = workerThreads.Worker;
+    const unpackedWorker = path.join(process.resourcesPath, "app.asar.unpacked", "dist", "electron", "main", "gamePatcher.js");
+    const fallbackWorker = path.resolve(__dirname, "gamePatcher.js");
+    const redirectWorker = (filename) => {
+      const value = filename && filename.href ? filename.href : String(filename || "");
+      if (!/gamePatcher\\.js(?:$|[?#])/.test(value)) return filename;
+      return fs.existsSync(unpackedWorker) ? unpackedWorker : fallbackWorker;
+    };
+    class MajesticProtonWorker extends OriginalWorker {
+      constructor(filename, options) {
+        super(redirectWorker(filename), options);
+      }
+    }
+    Object.defineProperty(MajesticProtonWorker, "__majesticProtonPatched", { value: true });
+    workerThreads.Worker = MajesticProtonWorker;
+  } catch (error) {
+    console.log("[majestic-proton] worker redirect hook was not installed", error);
+  }
+})();
+`;
+
   if (src.includes("app.asar.unpacked") && src.includes("gamePatcher.js")) {
-    src = `/* ${marker}: existing worker path redirect was accepted. */\n` + src;
+    src = workerHook + src;
     write(indexPath, src);
     return;
   }
@@ -77,10 +107,13 @@ function patchIndex() {
   }
 
   if (!patched) {
-    throw new Error("Could not find Worker(...gamePatcher.js...) in index.js");
+    src = workerHook + src;
+    write(indexPath, src);
+    console.warn("Could not rewrite Worker(...gamePatcher.js...) directly; installed runtime Worker redirect hook instead");
+    return;
   }
 
-  src = `/* ${marker}: worker path redirects to app.asar.unpacked under Proton. */\n` + src;
+  src = workerHook + src;
   write(indexPath, src);
 }
 
