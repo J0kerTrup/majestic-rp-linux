@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/majestic-proton.conf}"
+PATCHER_FILE="$SCRIPT_DIR/majestic-proton-js-patcher.js"
+PATCHER_REQUIRED_MARKER="MAJESTIC_PROTON_WORKER_HOOK_V3"
 
 if [[ -f "$CONFIG_FILE" ]]; then
   # shellcheck disable=SC1090
@@ -290,6 +292,9 @@ patch_asar_app() {
   local resources="$MAJESTIC_DIR/resources"
   local app_asar="$resources/app.asar"
   [[ -f "$app_asar" ]] || { log "app.asar not found, skipping launcher JS patch"; return 0; }
+  [[ -f "$PATCHER_FILE" ]] || die "JS patcher was not found: $PATCHER_FILE"
+  grep -q "$PATCHER_REQUIRED_MARKER" "$PATCHER_FILE" || die "Outdated JS patcher: $PATCHER_FILE. Copy the updated majestic-proton-js-patcher.js next to this script."
+  log "JS patcher: $PATCHER_FILE"
 
   local asar_bin
   asar_bin="$(find_asar)"
@@ -304,7 +309,7 @@ patch_asar_app() {
   backup_file "$app_asar"
   "$asar_bin" extract "$app_asar" "$tmp"
 
-  node "$SCRIPT_DIR/majestic-proton-js-patcher.js" "$tmp" "$MAJESTIC_PERMISSIONS"
+  node "$PATCHER_FILE" "$tmp" "$MAJESTIC_PERMISSIONS"
 
   mkdir -p "$resources/app.asar.unpacked/dist/electron/main"
   cp -a "$tmp/dist/electron/main/gamePatcher.js" "$resources/app.asar.unpacked/dist/electron/main/gamePatcher.js"
