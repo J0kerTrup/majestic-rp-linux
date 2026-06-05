@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/majestic-proton.conf}"
 PATCHER_FILE="$SCRIPT_DIR/majestic-proton-js-patcher.js"
-PATCHER_REQUIRED_MARKER="MAJESTIC_PROTON_WORKER_HOOK_V3"
+PATCHER_REQUIRED_MARKER="MAJESTIC_PROTON_PATCH_V4"
 
 if [[ -f "$CONFIG_FILE" ]]; then
   # shellcheck disable=SC1090
@@ -378,4 +378,16 @@ export MAJESTIC_DISABLE_CEF_GPU="$DISABLE_CEF_GPU"
 
 cd "$MAJESTIC_DIR"
 log "Starting Majestic Launcher with Proton verb: $PROTON_VERB"
-exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE"
+if [[ -n "${ELECTRON_DISABLE_SANDBOX:-}" ]]; then
+  export ELECTRON_DISABLE_SANDBOX
+fi
+if [[ -n "${ELECTRON_DISABLE_GPU:-}" ]]; then
+  export ELECTRON_DISABLE_GPU
+fi
+
+# Launch with additional flags if defined
+if [[ -n "${MAJESTIC_LAUNCHER_FLAGS:-}" ]]; then
+  exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE" $MAJESTIC_LAUNCHER_FLAGS
+else
+  exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE"
+fi
