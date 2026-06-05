@@ -1,5 +1,8 @@
 # Majestic RP Proton Linux Patch
 
+# Discord для поддержки:
+https://discord.gg/fkNExq39Yg
+
 Универсальный патч и запускалка для **Majestic RP / Majestic Launcher** под Linux через **Steam Proton** и **GTA V Legacy**. Помогает запускать Majestic RP на Ubuntu, Fedora, Arch, Manjaro, Linux Mint и других Linux-системах без ручного редактирования Proton prefix.
 
 Пак специально подготовлен для комфортной игры на **server LAS VEGAS** семьи Moretti - [Moretti Club](https://moretti.club/). При этом технически он остается универсальным Proton-патчем для Majestic Launcher под Linux и может работать с другими серверами Majestic.
