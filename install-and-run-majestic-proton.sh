@@ -4,15 +4,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/majestic-proton.conf}"
 PATCHER_FILE="$SCRIPT_DIR/majestic-proton-js-patcher.js"
-PATCHER_REQUIRED_MARKER="MAJESTIC_PROTON_PATCH_V4"
+PATCHER_REQUIRED_MARKER="MAJESTIC_PROTON_INDEX_COMPAT_V4"
 
 if [[ -f "$CONFIG_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$CONFIG_FILE"
 fi
 
-GAME_WIDTH="${GAME_WIDTH:-2560}"
-GAME_HEIGHT="${GAME_HEIGHT:-1140}"
+GAME_WIDTH="${GAME_WIDTH:-1920}"
+GAME_HEIGHT="${GAME_HEIGHT:-1080}"
 GAME_WINDOWED="${GAME_WINDOWED:-1}"
 GAME_BORDERLESS="${GAME_BORDERLESS:-1}"
 DISABLE_CEF_GPU="${DISABLE_CEF_GPU:-1}"
@@ -20,8 +20,12 @@ MAJESTIC_PLATFORM="${MAJESTIC_PLATFORM:-rgl}"
 GTA_WINE_DRIVE="${GTA_WINE_DRIVE:-g}"
 MAJESTIC_PERMISSIONS="${MAJESTIC_PERMISSIONS:-1,3,4}"
 RESET_ROCKSTAR_DOCUMENTS="${RESET_ROCKSTAR_DOCUMENTS:-0}"
-PROTON_VERB="${PROTON_VERB:-runinprefix}"
+
+
+PROTON_VERB="${PROTON_VERB:-waitforexitandrun}"
 APP_ID="${APP_ID:-}"
+
+MAJESTIC_LAUNCHER_FLAGS="${MAJESTIC_LAUNCHER_FLAGS:---no-sandbox --disable-dev-shm-usage --disable-gpu-sandbox}"
 
 log() { printf '[majestic-proton] %s\n' "$*"; }
 die() { printf '[majestic-proton] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -163,6 +167,7 @@ find_proton() {
   if [[ -n "${PROTON_PATH:-}" && -x "${PROTON_PATH:-}" ]]; then printf '%s\n' "$PROTON_PATH"; return; fi
   local candidates=()
   local root
+
   while IFS= read -r root; do
     candidates+=(
       "$root/steamapps/common/Proton - Experimental/proton"
@@ -171,16 +176,19 @@ find_proton() {
       "$root/steamapps/common/Proton 9.0/proton"
     )
   done < <(get_steam_library_roots "$STEAM_ROOT")
+
   candidates+=(
     "$HOME/.steam/root/compatibilitytools.d/GE-Proton10-34/proton"
     "$HOME/.local/share/Steam/compatibilitytools.d/GE-Proton10-34/proton"
     "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam/compatibilitytools.d/GE-Proton10-34/proton"
     "$HOME/snap/steam/common/.local/share/Steam/compatibilitytools.d/GE-Proton10-34/proton"
   )
+
   local c
   for c in "${candidates[@]}"; do
     [[ -x "$c" ]] && { printf '%s\n' "$c"; return; }
   done
+
   local found
   found="$(find \
     "$STEAM_ROOT/steamapps/common" \
@@ -191,6 +199,7 @@ find_proton() {
     "$HOME/snap/steam/common/.local/share/Steam/compatibilitytools.d" \
     -maxdepth 2 -type f -name proton -executable 2>/dev/null | sort -Vr | head -n 1 || true)"
   [[ -n "$found" ]] && { printf '%s\n' "$found"; return; }
+
   die "Proton was not found. Set PROTON_PATH in $CONFIG_FILE."
 }
 
@@ -319,8 +328,6 @@ patch_asar_app() {
 
   node "$PATCHER_FILE" "$tmp" "$MAJESTIC_PERMISSIONS"
 
-  mkdir -p "$resources/app.asar.unpacked/dist/electron/main"
-  cp -a "$tmp/dist/electron/main/gamePatcher.js" "$resources/app.asar.unpacked/dist/electron/main/gamePatcher.js"
   "$asar_bin" pack "$tmp" "$app_asar"
   rm -rf "$tmp"
 }
@@ -366,28 +373,22 @@ patch_runtime_configs
 reset_rockstar_documents
 patch_asar_app
 
-export STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM_ROOT"
-export STEAM_COMPAT_DATA_PATH="$COMPATDATA"
-export STEAM_COMPAT_APP_ID="$APP_ID"
-export SteamAppId="$APP_ID"
-export SteamGameId="$APP_ID"
+export STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}"
+export STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH:-$COMPATDATA}"
+export STEAM_COMPAT_APP_ID="${STEAM_COMPAT_APP_ID:-$APP_ID}"
+export SteamAppId="${SteamAppId:-$APP_ID}"
+export SteamGameId="${SteamGameId:-$APP_ID}"
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-winegstreamer=d}"
+
 export MAJESTIC_PROTON_PLATFORM="$MAJESTIC_PLATFORM"
 export MAJESTIC_GTA_WIN_PATH="${GTA_WINE_DRIVE^^}:\\"
 export MAJESTIC_DISABLE_CEF_GPU="$DISABLE_CEF_GPU"
 
+export ELECTRON_DISABLE_SANDBOX="${ELECTRON_DISABLE_SANDBOX:-1}"
+export ELECTRON_DISABLE_GPU="${ELECTRON_DISABLE_GPU:-1}"
+
 cd "$MAJESTIC_DIR"
 log "Starting Majestic Launcher with Proton verb: $PROTON_VERB"
-if [[ -n "${ELECTRON_DISABLE_SANDBOX:-}" ]]; then
-  export ELECTRON_DISABLE_SANDBOX
-fi
-if [[ -n "${ELECTRON_DISABLE_GPU:-}" ]]; then
-  export ELECTRON_DISABLE_GPU
-fi
+log "Platform: $MAJESTIC_PLATFORM, GTA Path (Win): ${GTA_WINE_DRIVE^^}:\\"
 
-# Launch with additional flags if defined
-if [[ -n "${MAJESTIC_LAUNCHER_FLAGS:-}" ]]; then
-  exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE" $MAJESTIC_LAUNCHER_FLAGS
-else
-  exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE"
-fi
+exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE" $MAJESTIC_LAUNCHER_FLAGS
