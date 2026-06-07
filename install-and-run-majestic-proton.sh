@@ -590,6 +590,14 @@ if [[ -z "$APP_ID" ]]; then
   APP_ID="$(basename "$COMPATDATA")"
   log_info "Using AppID from detected compatdata folder" "Environment" "APP_ID=$APP_ID COMPATDATA=$COMPATDATA"
 fi
+
+if command -v protontricks >/dev/null 2>&1; then
+  log_info "Forcing Windows 10 for Proton prefix" "Proton" "APP_ID=$APP_ID"
+  protontricks "$APP_ID" win10 || log_debug "protontricks win10 returned non-zero, continuing..." "Proton"
+else
+  log_debug "protontricks not found, skipping Windows 10 enforcement" "Proton"
+fi
+
 PROTON="$(find_proton)"
 MAJESTIC_EXE="$(find_majestic_exe)"
 MAJESTIC_DIR="$(dirname "$MAJESTIC_EXE")"
