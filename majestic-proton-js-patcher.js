@@ -6,10 +6,80 @@ const path = require("path");
 const os = require("os");
 const childProcess = require("child_process");
 
+const scriptDir = __dirname;
+const logDir = path.join(scriptDir, "logs");
+const logFile = path.join(logDir, "majestic-proton.log");
+const logMaxBytes = 10 * 1024 * 1024;
+const logMaxFiles = 10;
+
+function initLogging() {
+  fs.mkdirSync(logDir, { recursive: true });
+  if (fs.existsSync(logFile)) {
+    const size = fs.statSync(logFile).size;
+    if (size >= logMaxBytes) {
+      const lastRotated = `${logFile}.${logMaxFiles - 1}`;
+      if (fs.existsSync(lastRotated)) fs.rmSync(lastRotated, { force: true });
+      for (let i = logMaxFiles - 2; i >= 1; i--) {
+        const current = `${logFile}.${i}`;
+        if (fs.existsSync(current)) fs.renameSync(current, `${logFile}.${i + 1}`);
+      }
+      fs.renameSync(logFile, `${logFile}.1`);
+    }
+  }
+  fs.closeSync(fs.openSync(logFile, "a"));
+}
+
+function timestamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function colorFor(level) {
+  if (!process.stderr.isTTY) return "";
+  return {
+    INFO: "\x1b[34m",
+    DEBUG: "\x1b[90m",
+    SUCCESS: "\x1b[32m",
+    WARN: "\x1b[33m",
+    ERROR: "\x1b[31m",
+  }[level] || "";
+}
+
+function formatData(data) {
+  if (data === undefined || data === null || data === "") return "";
+  if (data instanceof Error) {
+    return `name=${data.name} message=${data.message} stack=${JSON.stringify(data.stack || "")}`;
+  }
+  if (typeof data === "string") return data;
+  return JSON.stringify(data);
+}
+
+function log(level, moduleName, message, data) {
+  const extra = formatData(data);
+  const line = `[${timestamp()}] [${level}] [${moduleName}] ${message}${extra ? ` | ${extra}` : ""}`;
+  fs.appendFileSync(logFile, `${line}\n`);
+  const color = colorFor(level);
+  const reset = color ? "\x1b[0m" : "";
+  process.stderr.write(`${color}${line}${reset}\n`);
+}
+
+const logInfo = (moduleName, message, data) => log("INFO", moduleName, message, data);
+const logDebug = (moduleName, message, data) => log("DEBUG", moduleName, message, data);
+const logWarn = (moduleName, message, data) => log("WARN", moduleName, message, data);
+const logError = (moduleName, message, data) => log("ERROR", moduleName, message, data);
+const logSuccess = (moduleName, message, data) => log("SUCCESS", moduleName, message, data);
+
+initLogging();
+
 const root = process.argv[2];
 const permissions = process.argv[3] || "1,3,4";
 if (!root) {
-  console.error("Usage: majestic-proton-js-patcher.js <app-dir|resources-dir|app.asar|app.asar.unpacked> [permissions]");
+  logError("Patcher", "Missing required root argument", {
+    exitCode: 2,
+    command: process.argv.join(" "),
+    usage: "majestic-proton-js-patcher.js <app-dir|resources-dir|app.asar|app.asar.unpacked> [permissions]",
+  });
   process.exit(2);
 }
 
@@ -17,6 +87,25 @@ const marker = "MAJESTIC_PROTON_PATCH_V2";
 const indexCompatMarker = "MAJESTIC_PROTON_INDEX_COMPAT_V4";
 const directMarker = "MAJESTIC_PROTON_DIRECT_PATCH_V1";
 const asarBin = process.env.ASAR_BIN || "asar";
+
+logInfo("Patcher", "Starting Majestic Proton JS patcher", {
+  root,
+  permissions,
+  scriptDir,
+  logFile,
+  node: process.version,
+  platform: process.platform,
+  asarBin,
+});
+logDebug("Environment", "Relevant environment values", {
+  ASAR_BIN: process.env.ASAR_BIN,
+  STEAM_COMPAT_DATA_PATH: process.env.STEAM_COMPAT_DATA_PATH,
+  STEAM_COMPAT_CLIENT_INSTALL_PATH: process.env.STEAM_COMPAT_CLIENT_INSTALL_PATH,
+  MAJESTIC_GTA_WIN_PATH: process.env.MAJESTIC_GTA_WIN_PATH,
+  MAJESTIC_PROTON_PLATFORM: process.env.MAJESTIC_PROTON_PLATFORM,
+  MAJESTIC_DISABLE_CEF_GPU: process.env.MAJESTIC_DISABLE_CEF_GPU,
+  WINEPREFIX: process.env.WINEPREFIX,
+});
 
 function exists(file) {
   return fs.existsSync(file);
@@ -31,24 +120,35 @@ function isDirectory(file) {
 }
 
 function read(file) {
+  logDebug("Files", "Reading text file", { file });
   return fs.readFileSync(file, "utf8");
 }
 
 function write(file, data) {
+  logInfo("Files", "Writing text file", { file, bytes: Buffer.byteLength(data, "utf8") });
   fs.writeFileSync(file, data);
+  logSuccess("Files", "Text file written", { file });
 }
 
 function run(command, args) {
+  logInfo("Command", "Executing command", { command: `${command} ${args.join(" ")}`, args });
   const result = childProcess.spawnSync(command, args, {
     stdio: "inherit",
     shell: process.platform === "win32",
   });
   if (result.error) {
+    logError("Command", "Command failed to start", { command, args, error: result.error });
     throw result.error;
   }
   if (result.status !== 0) {
+    logError("Command", "Command exited with non-zero status", {
+      command: `${command} ${args.join(" ")}`,
+      exitCode: result.status,
+      signal: result.signal,
+    });
     throw new Error(`${command} ${args.join(" ")} failed with status ${result.status}`);
   }
+  logSuccess("Command", "Command completed successfully", { command: `${command} ${args.join(" ")}`, exitCode: result.status });
 }
 
 function resolveTargets(inputPath) {
@@ -57,10 +157,18 @@ function resolveTargets(inputPath) {
   const siblingAppAsar = path.join(path.dirname(resolvedRoot), "app.asar");
   const extractedIndexPath = path.join(resolvedRoot, "dist", "electron", "main", "index.js");
 
+  logInfo("Patcher", "Resolving patch targets", {
+    inputPath,
+    resolvedRoot,
+    appAsarFromRoot,
+    siblingAppAsar,
+    extractedIndexPath,
+  });
+
   if (isFile(resolvedRoot) && path.basename(resolvedRoot) === "app.asar") {
     const resourcesDir = path.dirname(resolvedRoot);
     const extractedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "majestic-app-asar-"));
-    return {
+    const targets = {
       mode: "asar",
       appRoot: extractedRoot,
       resourcesDir,
@@ -68,11 +176,13 @@ function resolveTargets(inputPath) {
       unpackedRoot: path.join(resourcesDir, "app.asar.unpacked"),
       cleanupRoot: extractedRoot,
     };
+    logSuccess("Patcher", "Resolved app.asar file target", targets);
+    return targets;
   }
 
   if (isDirectory(resolvedRoot) && isFile(appAsarFromRoot)) {
     const extractedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "majestic-app-asar-"));
-    return {
+    const targets = {
       mode: "asar",
       appRoot: extractedRoot,
       resourcesDir: resolvedRoot,
@@ -80,11 +190,13 @@ function resolveTargets(inputPath) {
       unpackedRoot: path.join(resolvedRoot, "app.asar.unpacked"),
       cleanupRoot: extractedRoot,
     };
+    logSuccess("Patcher", "Resolved resources directory target", targets);
+    return targets;
   }
 
   if (isDirectory(resolvedRoot) && path.basename(resolvedRoot) === "app.asar.unpacked" && isFile(siblingAppAsar)) {
     const extractedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "majestic-app-asar-"));
-    return {
+    const targets = {
       mode: "asar",
       appRoot: extractedRoot,
       resourcesDir: path.dirname(resolvedRoot),
@@ -92,10 +204,12 @@ function resolveTargets(inputPath) {
       unpackedRoot: resolvedRoot,
       cleanupRoot: extractedRoot,
     };
+    logSuccess("Patcher", "Resolved app.asar.unpacked target with sibling app.asar", targets);
+    return targets;
   }
 
   if (isFile(extractedIndexPath)) {
-    return {
+    const targets = {
       mode: "extracted",
       appRoot: resolvedRoot,
       resourcesDir: path.dirname(resolvedRoot),
@@ -103,8 +217,11 @@ function resolveTargets(inputPath) {
       unpackedRoot: resolvedRoot,
       cleanupRoot: "",
     };
+    logSuccess("Patcher", "Resolved extracted app directory target", targets);
+    return targets;
   }
 
+  logError("Patcher", "Could not locate Majestic app files", { resolvedRoot });
   throw new Error(
     [
       `Could not locate Majestic app files under: ${resolvedRoot}`,
@@ -118,37 +235,64 @@ function resolveTargets(inputPath) {
 }
 
 function extractAsar(targets) {
-  if (targets.mode !== "asar") return;
+  if (targets.mode !== "asar") {
+    logDebug("Patcher", "ASAR extraction skipped for extracted target", targets);
+    return;
+  }
+  logInfo("Patcher", "Extracting app.asar", { asarPath: targets.asarPath, appRoot: targets.appRoot, asarBin });
   run(asarBin, ["extract", targets.asarPath, targets.appRoot]);
+  logSuccess("Patcher", "app.asar extracted", { appRoot: targets.appRoot });
 }
 
 function repackAsar(targets) {
-  if (targets.mode !== "asar") return;
+  if (targets.mode !== "asar") {
+    logDebug("Patcher", "ASAR repack skipped for extracted target", targets);
+    return;
+  }
   const backupPath = `${targets.asarPath}.bak`;
   if (!exists(backupPath)) {
+    logInfo("Files", "Creating app.asar backup", { source: targets.asarPath, backup: backupPath });
     fs.copyFileSync(targets.asarPath, backupPath);
-    console.log(`Backup created: ${backupPath}`);
+    logSuccess("Files", "app.asar backup created", { backup: backupPath });
+  } else {
+    logDebug("Files", "app.asar backup already exists", { backup: backupPath });
   }
+  logInfo("Patcher", "Packing patched app.asar", { appRoot: targets.appRoot, asarPath: targets.asarPath, asarBin });
   run(asarBin, ["pack", targets.appRoot, targets.asarPath]);
+  logSuccess("Patcher", "Patched app.asar packed", { asarPath: targets.asarPath });
 }
 
 function cleanup(targets) {
   if (targets.cleanupRoot) {
+    logInfo("Files", "Removing temporary extraction directory", { directory: targets.cleanupRoot });
     fs.rmSync(targets.cleanupRoot, { recursive: true, force: true });
+    logSuccess("Files", "Temporary extraction directory removed", { directory: targets.cleanupRoot });
+  } else {
+    logDebug("Files", "Cleanup skipped because no temporary directory was created");
   }
 }
 
 function patchIndex(indexPath) {
+  logInfo("Patcher", "Patching Majestic index.js", { indexPath });
   if (!fs.existsSync(indexPath)) {
+    logError("Patcher", "index.js not found", { indexPath });
     throw new Error(`index.js not found: ${indexPath}`);
   }
 
   let src = read(indexPath);
+  logDebug("Patcher", "Loaded index.js", {
+    indexPath,
+    bytes: Buffer.byteLength(src, "utf8"),
+    hasIndexCompatMarker: src.includes(indexCompatMarker),
+    hasDirectMarker: src.includes(directMarker),
+    hasWorkerMarker: src.includes(marker),
+  });
 
   if (!src.includes(indexCompatMarker)) {
     let compatPatched = false;
     const findGtaNeedle = 'dB=async()=>{ft.info("[findGTA] Looking for Steam...");';
     if (src.includes(findGtaNeedle)) {
+      logDebug("Patcher", "Applying legacy findGTA compatibility patch", { needle: findGtaNeedle });
       src = src.replace(
         findGtaNeedle,
         'dB=async()=>{const JO_ENV_GTA=process.env.MAJESTIC_GTA_WIN_PATH,JO_ENV_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM;if(JO_ENV_GTA&&["rgl","egs"].includes(JO_ENV_PLATFORM)&&dn(JO_ENV_GTA))return ft.info("[findGTA] using forced Proton GTA path",JO_ENV_GTA,JO_ENV_PLATFORM),[JO_ENV_GTA,JO_ENV_PLATFORM];ft.info("[findGTA] Looking for Steam...");'
@@ -158,6 +302,7 @@ function patchIndex(indexPath) {
 
     const findGtaNeedleCurrent = 'EO=async()=>{ht.info("[findGTA] Looking for Steam...");';
     if (src.includes(findGtaNeedleCurrent)) {
+      logDebug("Patcher", "Applying current findGTA compatibility patch", { needle: findGtaNeedleCurrent });
       src = src.replace(
         findGtaNeedleCurrent,
         'EO=async()=>{const JO_ENV_GTA=process.env.MAJESTIC_GTA_WIN_PATH,JO_ENV_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM;if(JO_ENV_GTA&&["steam","rgl","egs"].includes(JO_ENV_PLATFORM)&&dn(JO_ENV_GTA))return ht.info("[findGTA] using forced Proton GTA path",JO_ENV_GTA,JO_ENV_PLATFORM),[JO_ENV_GTA,JO_ENV_PLATFORM];ht.info("[findGTA] Looking for Steam...");'
@@ -167,6 +312,7 @@ function patchIndex(indexPath) {
 
     const platformNeedle = 'Nf=(e,t)=>{const n=e?.replace("GTA5.exe","");';
     if (src.includes(platformNeedle)) {
+      logDebug("Patcher", "Applying legacy platform detection patch", { needle: platformNeedle });
       src = src.replace(
         platformNeedle,
         'Nf=(e,t)=>{const JO_FORCED_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM;if(["rgl","egs"].includes(JO_FORCED_PLATFORM))return JO_FORCED_PLATFORM;const n=e?.replace("GTA5.exe","");'
@@ -176,6 +322,7 @@ function patchIndex(indexPath) {
 
     const platformNeedleCurrent = 'tf=(e,t)=>{const n=e?.replace("GTA5.exe","");';
     if (src.includes(platformNeedleCurrent)) {
+      logDebug("Patcher", "Applying current platform detection patch", { needle: platformNeedleCurrent });
       src = src.replace(
         platformNeedleCurrent,
         'tf=(e,t)=>{const JO_FORCED_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM;if(["steam","rgl","egs"].includes(JO_FORCED_PLATFORM))return JO_FORCED_PLATFORM;const n=e?.replace("GTA5.exe","");'
@@ -185,6 +332,7 @@ function patchIndex(indexPath) {
 
     const fallbackNeedle = 'JO_fallbackPlayGTAV=e=>new Promise(t=>{try{const n=e,r=oe.join(n,"PlayGTAV.exe"),i={...process.env,SteamAppId:process.env.SteamAppId||"271590",SteamGameId:process.env.SteamGameId||"271590"};';
     if (src.includes(fallbackNeedle)) {
+      logDebug("Patcher", "Applying Steam fallback compatibility patch", { needle: fallbackNeedle });
       src = src.replace(
         fallbackNeedle,
         'JO_fallbackPlayGTAV=e=>new Promise(t=>{try{if(process.env.MAJESTIC_PROTON_PLATFORM!=="steam")return P.info(JO_DBG,"fallback PlayGTAV disabled for non-Steam platform",{platform:process.env.MAJESTIC_PROTON_PLATFORM}),t(!1);const n=e,r=oe.join(n,"PlayGTAV.exe"),i={...process.env,SteamAppId:process.env.SteamAppId||"271590",SteamGameId:process.env.SteamGameId||"271590"};'
@@ -196,15 +344,25 @@ function patchIndex(indexPath) {
       src = `/* ${indexCompatMarker}: force configured Rockstar/Epic platform and disable Steam fallback. */\n` + src;
       write(indexPath, src);
       src = read(indexPath);
+      logSuccess("Patcher", "index.js compatibility patches applied", { indexPath });
+    } else {
+      logWarn("Patcher", "No known compatibility needles were found in index.js", { indexPath });
     }
+  } else {
+    logDebug("Patcher", "index.js compatibility marker already present", { marker: indexCompatMarker });
   }
 
   if (src.includes(directMarker) || src.includes(marker)) {
+    logSuccess("Patcher", "index.js already contains Proton patch marker", {
+      hasDirectMarker: src.includes(directMarker),
+      hasWorkerMarker: src.includes(marker),
+    });
     return;
   }
 
   const directNeedle = 'Ic.patchMultiplayerWithProgress(e,n=>{re("patcher_setPhase",n)})';
   if (src.includes(directNeedle)) {
+    logInfo("Patcher", "Applying direct native patcher hook", { needle: directNeedle, permissions });
     const permissionValues = permissions
       .split(",")
       .map((x) => Number.parseInt(x.trim(), 10))
@@ -219,26 +377,32 @@ function JO_patchMultiplayerWithProgress(e,t){return JO_adaptLaunchConfigForProt
 `;
     const anchor = "let Lc=!1,uf=!1;";
     if (!src.includes(anchor)) {
+      logError("Patcher", "Direct patch anchor was not found", { anchor });
       throw new Error("Could not find patcher state anchor in index.js; app.asar was not patched");
     }
     src = src.replace(anchor, helper + anchor);
     src = src.replace(directNeedle, 'JO_patchMultiplayerWithProgress(e,n=>{re("patcher_setPhase",n)})');
     write(indexPath, src);
+    logSuccess("Patcher", "Direct native patcher hook applied", { indexPath, permissionValues });
     return;
   }
 
   if (src.includes("app.asar.unpacked") && src.includes("gamePatcher.js")) {
+    logInfo("Patcher", "Accepting existing app.asar.unpacked worker path redirect", { indexPath });
     src = `/* ${marker}: existing worker path redirect was accepted. */\n` + src;
     write(indexPath, src);
+    logSuccess("Patcher", "Existing worker path redirect marked as accepted", { indexPath });
     return;
   }
 
   let patched = false;
   const workerNeedle = "gamePatcher.js";
   let pos = src.indexOf(workerNeedle);
+  logInfo("Patcher", "Searching Worker(...gamePatcher.js...) call", { workerNeedle, firstPosition: pos });
   while (pos !== -1) {
     const before = src.lastIndexOf("new ", pos);
     const workerCall = src.indexOf(".Worker(", before);
+    logDebug("Patcher", "Inspecting worker needle occurrence", { position: pos, before, workerCall });
     if (before !== -1 && workerCall !== -1 && workerCall < pos) {
       const argStart = workerCall + ".Worker(".length;
       let depth = 1;
@@ -262,6 +426,12 @@ function JO_patchMultiplayerWithProgress(e,t){return JO_adaptLaunchConfigForProt
       const originalArg = src.slice(argStart, i);
       if (originalArg.includes(workerNeedle)) {
         const replacement = `(()=>{const p=require("path"),f=require("fs"),q=p.join(process.resourcesPath,"app.asar.unpacked","dist","electron","main","gamePatcher.js");return f.existsSync(q)?q:p.resolve(__dirname,"gamePatcher.js")})()`;
+        logDebug("Patcher", "Replacing Worker argument", {
+          argStart,
+          argEnd: i,
+          originalArg,
+          replacement,
+        });
         src = src.slice(0, argStart) + replacement + src.slice(i);
         patched = true;
         break;
@@ -271,20 +441,25 @@ function JO_patchMultiplayerWithProgress(e,t){return JO_adaptLaunchConfigForProt
   }
 
   if (!patched) {
+    logError("Patcher", "Worker path patch failed because no compatible Worker call was found", { indexPath });
     throw new Error("Could not find Worker(...gamePatcher.js...) in index.js; app.asar was not patched");
   }
 
   src = `/* ${marker}: worker path redirects to app.asar.unpacked under Proton. */\n` + src;
   write(indexPath, src);
+  logSuccess("Patcher", "Worker path redirect applied", { indexPath });
 }
 
 function patchWorker(workerPath) {
+  logInfo("Patcher", "Writing Proton gamePatcher.js adapter", { workerPath });
   const mainDir = path.dirname(workerPath);
+  logDebug("Files", "Ensuring worker directory exists", { directory: mainDir });
   fs.mkdirSync(mainDir, { recursive: true });
   const permissionValues = permissions
     .split(",")
     .map((x) => Number.parseInt(x.trim(), 10))
     .filter((x) => Number.isInteger(x) && x >= 0 && x <= 254);
+  logDebug("Patcher", "Parsed permission values", { permissions, permissionValues });
 
   const worker = `/* ${marker}: Proton adapter for Majestic native patcher. */
 import { parentPort } from 'worker_threads';
@@ -404,20 +579,34 @@ parentPort.on('message', async (launchOptionsPath) => {
 `;
 
   write(workerPath, worker);
+  logSuccess("Patcher", "Proton gamePatcher.js adapter written", { workerPath, permissionValues });
 }
 
-const targets = resolveTargets(root);
-const indexPath = path.join(targets.appRoot, "dist", "electron", "main", "index.js");
-const workerPath = path.join(targets.unpackedRoot, "dist", "electron", "main", "gamePatcher.js");
-
+let targets;
 try {
+  targets = resolveTargets(root);
+  const indexPath = path.join(targets.appRoot, "dist", "electron", "main", "index.js");
+  const workerPath = path.join(targets.unpackedRoot, "dist", "electron", "main", "gamePatcher.js");
+  logDebug("Patcher", "Resolved patch file paths", { indexPath, workerPath });
   extractAsar(targets);
   patchIndex(indexPath);
   patchWorker(workerPath);
   repackAsar(targets);
-  console.log(`Majestic Proton JS patch applied (${targets.mode})`);
-  console.log(`index.js: ${indexPath}`);
-  console.log(`gamePatcher.js: ${workerPath}`);
+  logSuccess("Patcher", "Majestic Proton JS patch completed successfully", {
+    mode: targets.mode,
+    indexPath,
+    workerPath,
+  });
+} catch (error) {
+  logError("Patcher", "Majestic Proton JS patch failed", {
+    exitCode: 1,
+    command: process.argv.join(" "),
+    reason: error.message,
+    stack: error.stack,
+  });
+  process.exitCode = 1;
 } finally {
-  cleanup(targets);
+  if (targets) {
+    cleanup(targets);
+  }
 }
