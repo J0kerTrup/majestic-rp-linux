@@ -157,7 +157,7 @@ node --check majestic-proton-js-patcher.js
 
 ## Для поиска
 
-Majestic RP Linux, Majestic Launcher Linux, Majestic RP Proton, Majestic RP Ubuntu, Majestic RP Fedora, Majestic RP Arch, Majestic RP Steam Deck, Majestic Launcher Proton, Majestic Launcher app.asar, Majestic gamePatcher.js, GTA V Proton, GTA 5 Linux, GTA V Legacy Linux, Grand Theft Auto V Linux, Steam Proton GTA V, Rockstar Launcher Proton, Proton compatdata, Proton prefix, Flatpak Steam GTA V, Snap Steam GTA V, Moretti Club, Moretti LAS VEGAS, server LAS VEGAS.
+Majestic RP Linux, Majestic Launcher Linux, Majestic RP Proton, Majestic RP Ubuntu, Majestic RP Fedora, Majestic RP Arch, Majestic RP Steam Deck, Majestic Launcher Proton, Majestic Launcher app.asar, Majestic gamePatcher.js, GTA V Proton, GTA 5 Linux, GTA V Legacy Linux, Grand Theft Auto V Linux, Steam Proton GTA V, Rockstar Launcher Proton, Proton compatdata, Proton prefix, Flatpak Steam GTA V, Snap Steam GTA V.
 
 ## Важно
 
