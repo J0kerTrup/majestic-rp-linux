@@ -15,7 +15,7 @@ init_logging() {
   mkdir -p "$LOG_DIR"
   if [[ -f "$LOG_FILE" ]]; then
     local size
-    size="$(stat -c '%s' "$LOG_FILE" 2>/dev/null || printf '0')"
+    size="$(wc -c < "$LOG_FILE" 2>/dev/null | tr -d ' \t' || printf '0')"
     if (( size >= LOG_MAX_BYTES )); then
       rm -f "$LOG_FILE.$((LOG_MAX_FILES - 1))"
       local i
@@ -316,7 +316,49 @@ find_gta_path() {
       return
     }
   done
+
+  # Heroic Launcher / Lutris fallback (EGS and RGL outside Steam)
+  local heroic_candidates=(
+    "$HOME/Games/Grand Theft Auto V"
+    "$HOME/Games/GTA V"
+    "$HOME/Games/Heroic/Grand Theft Auto V"
+    "$HOME/.var/app/com.heroicgameslauncher.hgl/config/heroic/Games/Grand Theft Auto V"
+    "$HOME/Games/grand-theft-auto-v"
+    "$HOME/heroic/Grand Theft Auto V"
+  )
+  local c
+  for c in "${heroic_candidates[@]}"; do
+    log_debug "Checking Heroic/Lutris GTA V candidate" "GTA" "candidate=$c"
+    [[ -f "$c/GTA5.exe" && -f "$c/x64j.rpf" ]] && {
+      log_success "GTA V path detected from Heroic/Lutris directory" "GTA" "GTA_PATH=$c"
+      printf '%s\n' "$c"
+      return
+    }
+  done
+
   die "GTA V Legacy was not found. Set GTA_PATH in $CONFIG_FILE."
+}
+
+detect_gta_platform() {
+  local gta="$1"
+  # EGS: only EGS ships EOSSDK; check first since GTAVLauncher.exe exists in Steam too
+  if [[ -f "$gta/EOSSDK-Win64-Shipping.dll" ]]; then printf 'egs\n'; return; fi
+  # Steam: steam_api64.dll without EOSSDK = Steam
+  if [[ -f "$gta/steam_api64.dll" ]]; then printf 'steam\n'; return; fi
+  # RGL: GTAVLauncher.exe without steam_api64.dll = RGL
+  if [[ -f "$gta/GTAVLauncher.exe" ]]; then printf 'rgl\n'; return; fi
+  printf 'rgl\n'
+}
+
+ensure_gta_launcher_for_egs() {
+  local gta="$1"
+  # EGS GTA V does not ship GTAVLauncher.exe; create a symlink so the launcher
+  # can invoke it and Wine will transparently execute GTA5.exe instead.
+  if [[ ! -f "$gta/GTAVLauncher.exe" && -f "$gta/GTA5.exe" ]]; then
+    log_info "GTAVLauncher.exe not found (EGS install); creating GTA5.exe symlink" "GTA" "target=$gta/GTAVLauncher.exe"
+    ln -sfn "$gta/GTA5.exe" "$gta/GTAVLauncher.exe"
+    log_success "GTAVLauncher.exe → GTA5.exe symlink created for EGS compatibility" "GTA"
+  fi
 }
 
 find_proton() {
@@ -573,6 +615,20 @@ validate_proton_verb
 
 STEAM_ROOT="$(find_steam_root)"
 GTA_PATH="$(find_gta_path)"
+
+# Auto-detect real GTA V platform and warn if conf value differs
+DETECTED_GTA_PLATFORM="$(detect_gta_platform "$GTA_PATH")"
+log_info "Detected GTA V platform from files" "GTA" "detected=$DETECTED_GTA_PLATFORM configured=$MAJESTIC_PLATFORM GTA_PATH=$GTA_PATH"
+if [[ "$MAJESTIC_PLATFORM" = "rgl" && "$DETECTED_GTA_PLATFORM" != "rgl" ]]; then
+  log_warn "MAJESTIC_PLATFORM=rgl in conf but detected platform is '$DETECTED_GTA_PLATFORM'. Consider setting MAJESTIC_PLATFORM=$DETECTED_GTA_PLATFORM in $CONFIG_FILE." "GTA"
+  MAJESTIC_PLATFORM="$DETECTED_GTA_PLATFORM"
+  log_info "Auto-corrected MAJESTIC_PLATFORM to '$MAJESTIC_PLATFORM'" "GTA"
+fi
+
+# For EGS: create GTAVLauncher.exe → GTA5.exe symlink so the launcher can invoke it via Wine
+if [[ "$MAJESTIC_PLATFORM" = "egs" ]]; then
+  ensure_gta_launcher_for_egs "$GTA_PATH"
+fi
 
 GTA_MANIFEST="$(find_gta_manifest "$GTA_PATH" || true)"
 if [[ -z "$APP_ID" && -n "$GTA_MANIFEST" ]]; then

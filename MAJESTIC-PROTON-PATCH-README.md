@@ -1,95 +1,152 @@
-# Короткая инструкция
+# Majestic RP Linux — что было сломано и что исправлено
 
-Majestic Proton Patch помогает запускать **Majestic Launcher / Majestic RP** на Linux через Steam Proton.
+## Проблема
 
-Пак специально подготовлен для комфортной игры на **server LAS VEGAS** семьи Moretti - [Moretti Club](https://moretti.club/). При этом он остается универсальным Proton-патчем для Majestic Launcher и может работать с другими серверами Majestic.
+Из трёх платформ GTA V (`rgl`, `steam`, `egs`) реально работала только `rgl`.
 
-Подходит для запросов: Majestic RP Linux, Majestic Launcher Proton, GTA V Proton, GTA 5 Linux, Moretti LAS VEGAS, server LAS VEGAS.
+---
 
-## Быстрый запуск
+## Bug 1 — JS-патчер: legacy-иглы не включали `steam`
 
-Положи рядом с `Majestic Launcher.exe`:
+**Файл:** `majestic-proton-js-patcher.js`
 
-```text
-install-and-run-majestic-proton.sh
-majestic-proton.conf
-majestic-proton-js-patcher.js
+**Проблема:**
+
+Патчер имеет две пары игл для двух версий минификации Windows-лаунчера.
+В обеих legacy-иглах массив платформ не содержал `"steam"`:
+
+```js
+// было (строка 298 — legacy findGTA):
+["rgl","egs"].includes(JO_ENV_PLATFORM)
+// → для steam: false → env-override не применяется → лаунчер не находит GTA V
+
+// было (строка 318 — legacy platform):
+["rgl","egs"].includes(JO_FORCED_PLATFORM)
+// → для steam: false → платформа не форсируется → лаунчер определяет её сам → ошибка
 ```
 
-Запусти:
+**Исправление:**
+
+```js
+// стало (строки 298 и 318):
+["steam","rgl","egs"].includes(...)
+```
+
+Теперь все 4 иглы (2 legacy + 2 current) содержат все три платформы.
+
+---
+
+## Bug 2 — Авто-поиск GTA V не охватывал Heroic Launcher
+
+**Файл:** `install-and-run-majestic-proton.sh` → `find_gta_path()`
+
+**Проблема:**
+
+`find_gta_path()` искала GTA V только в Steam-манифестах и `steamapps/common/`.
+Пользователи EGS и RGL через Heroic Launcher устанавливают GTA V в другие директории.
+При отсутствии `GTA_PATH` в конфиге — `die "GTA V Legacy was not found"`.
+
+**Исправление:**
+
+Добавлен блок fallback-кандидатов после Steam-поиска:
 
 ```bash
-chmod +x install-and-run-majestic-proton.sh
-./install-and-run-majestic-proton.sh
+"$HOME/Games/Grand Theft Auto V"
+"$HOME/Games/GTA V"
+"$HOME/Games/Heroic/Grand Theft Auto V"
+"$HOME/.var/app/com.heroicgameslauncher.hgl/config/heroic/Games/Grand Theft Auto V"
+"$HOME/Games/grand-theft-auto-v"
+"$HOME/heroic/Grand Theft Auto V"
 ```
 
-## Настройка разрешения
+---
 
-Открой `majestic-proton.conf`:
+## Bug 3 — EGS GTA V не имеет `GTAVLauncher.exe`
+
+**Файл:** `install-and-run-majestic-proton.sh`
+
+**Проблема:**
+
+EGS-версия GTA V не содержит `GTAVLauncher.exe` (это файл Rockstar Games Launcher).
+Лаунчер с `MAJESTIC_PLATFORM=egs` внутри Wine пытается запустить `G:\GTAVLauncher.exe`,
+файл не существует → запуск игры падает.
+
+**Исправление:**
+
+Добавлена функция `ensure_gta_launcher_for_egs()`:
 
 ```bash
-GAME_WIDTH=1280
-GAME_HEIGHT=720
+if [[ ! -f "$gta/GTAVLauncher.exe" && -f "$gta/GTA5.exe" ]]; then
+    ln -sfn "$gta/GTA5.exe" "$gta/GTAVLauncher.exe"
+fi
 ```
 
-## Что произойдет автоматически
+Если платформа `egs` и `GTAVLauncher.exe` отсутствует — создаётся симлинк на `GTA5.exe`.
+Wine прозрачно следует за симлинком: при запуске `G:\GTAVLauncher.exe` запускается `GTA5.exe`.
+EGS DRM (`EOSSDK-Win64-Shipping.dll`) загружается самой `GTA5.exe` — симлинк ничего не ломает.
 
-- Будет найден Steam.
-- Будет найдена GTA V Legacy.
-- AppID будет взят из Steam manifest.
-- Будет найден правильный Proton prefix.
-- Будет найден Proton.
-- Будет найден `Majestic Launcher.exe`.
-- Будет создан Wine drive `G:`.
-- Будет обновлен `commandline.txt`.
-- Будет применен JS-патч к Majestic Launcher.
-- Лаунчер запустится через Proton.
+---
 
-## Если авто-поиск не сработал
+## Bug 4 — `MAJESTIC_PLATFORM=rgl` хардкодом для всех платформ
 
-Укажи пути вручную в `majestic-proton.conf`:
+**Файл:** `install-and-run-majestic-proton.sh`, `majestic-proton.conf`
+
+**Проблема:**
+
+Конфиг содержал `MAJESTIC_PLATFORM=rgl` без авто-определения.
+Steam- и EGS-пользователи должны были знать, что нужно менять это значение вручную.
+
+**Исправление:**
+
+Добавлена функция `detect_gta_platform()` с правильным порядком проверки DLL:
 
 ```bash
-STEAM_ROOT=
-STEAM_COMPAT_DATA_PATH=
-GTA_PATH=
-PROTON_PATH=
-MAJESTIC_EXE=
+detect_gta_platform() {
+  # EGS: EOSSDK уникален — проверяем первым
+  if [[ -f "$gta/EOSSDK-Win64-Shipping.dll" ]]; then printf 'egs\n'; return; fi
+  # Steam: steam_api64.dll (GTAVLauncher.exe есть и в Steam — проверяем после EOSSDK)
+  if [[ -f "$gta/steam_api64.dll" ]]; then printf 'steam\n'; return; fi
+  # RGL: только GTAVLauncher.exe без steam_api64.dll
+  if [[ -f "$gta/GTAVLauncher.exe" ]]; then printf 'rgl\n'; return; fi
+  printf 'rgl\n'
+}
 ```
 
-`APP_ID` обычно оставляют пустым:
+Логика авто-коррекции при запуске:
 
 ```bash
-APP_ID=
+DETECTED_GTA_PLATFORM="$(detect_gta_platform "$GTA_PATH")"
+if [[ "$MAJESTIC_PLATFORM" = "rgl" && "$DETECTED_GTA_PLATFORM" != "rgl" ]]; then
+  # Конфиг не трогался пользователем, но платформа другая — применяем авто
+  MAJESTIC_PLATFORM="$DETECTED_GTA_PLATFORM"
+fi
 ```
 
-## Зависимости
+Авто-коррекция срабатывает **только** если конфиг не менялся (`rgl` = дефолт).
+Если пользователь явно выставил платформу — она не перезаписывается.
 
-Ubuntu / Debian:
+---
+
+## Итоговая таблица
+
+| Платформа | DLL-маркер | Запуск в Wine | Стаб GTAVLauncher |
+|-----------|-----------|---------------|-------------------|
+| `rgl`     | `GTAVLauncher.exe` (без steam dll) | `G:\GTAVLauncher.exe` | не нужен |
+| `steam`   | `steam_api64.dll` | `PlayGTAV.exe` (через Steam) | не нужен |
+| `egs`     | `EOSSDK-Win64-Shipping.dll` | `G:\GTAVLauncher.exe` → симлинк на `GTA5.exe` | создаётся автоматически |
+
+---
+
+## Быстрый старт по платформам
 
 ```bash
-sudo apt install nodejs npm perl sed findutils
-sudo npm install -g @electron/asar
+# Steam GTA V (обычно работает без изменений)
+MAJESTIC_PLATFORM=steam  # в majestic-proton.conf (или авто-определится)
+
+# RGL GTA V (дефолт, работал всегда)
+MAJESTIC_PLATFORM=rgl
+
+# EGS GTA V через Heroic — обязательно указать путь если не в Steam
+GTA_PATH=/home/user/Games/Grand\ Theft\ Auto\ V  # в majestic-proton.conf
+# MAJESTIC_PLATFORM=egs определится автоматически
 ```
-
-Fedora:
-
-```bash
-sudo dnf install nodejs npm perl sed findutils
-sudo npm install -g @electron/asar
-```
-
-Arch / Manjaro:
-
-```bash
-sudo pacman -S nodejs npm perl sed findutils
-sudo npm install -g @electron/asar
-```
-
-## Ограничение
-
-Патч не изменяет GTA V, DLL, anti-cheat, DRM или сетевой протокол. Он только настраивает Proton-окружение и JS-совместимость Majestic Launcher под Linux.
-
-## Лицензия
-
-MIT. Подробности в файле `LICENSE`.

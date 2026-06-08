@@ -131,8 +131,9 @@ function write(file, data) {
 }
 
 function run(command, args) {
+  const [cmd, ...preArgs] = command.trim().split(/\s+/);
   logInfo("Command", "Executing command", { command: `${command} ${args.join(" ")}`, args });
-  const result = childProcess.spawnSync(command, args, {
+  const result = childProcess.spawnSync(cmd, [...preArgs, ...args], {
     stdio: "inherit",
     shell: process.platform === "win32",
   });
@@ -295,7 +296,7 @@ function patchIndex(indexPath) {
       logDebug("Patcher", "Applying legacy findGTA compatibility patch", { needle: findGtaNeedle });
       src = src.replace(
         findGtaNeedle,
-        'dB=async()=>{const JO_ENV_GTA=process.env.MAJESTIC_GTA_WIN_PATH,JO_ENV_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM;if(JO_ENV_GTA&&["rgl","egs"].includes(JO_ENV_PLATFORM)&&dn(JO_ENV_GTA))return ft.info("[findGTA] using forced Proton GTA path",JO_ENV_GTA,JO_ENV_PLATFORM),[JO_ENV_GTA,JO_ENV_PLATFORM];ft.info("[findGTA] Looking for Steam...");'
+        'dB=async()=>{const JO_ENV_GTA=process.env.MAJESTIC_GTA_WIN_PATH,JO_ENV_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM;if(JO_ENV_GTA&&["steam","rgl","egs"].includes(JO_ENV_PLATFORM)&&dn(JO_ENV_GTA))return ft.info("[findGTA] using forced Proton GTA path",JO_ENV_GTA,JO_ENV_PLATFORM),[JO_ENV_GTA,JO_ENV_PLATFORM];ft.info("[findGTA] Looking for Steam...");'
       );
       compatPatched = true;
     }
@@ -315,7 +316,7 @@ function patchIndex(indexPath) {
       logDebug("Patcher", "Applying legacy platform detection patch", { needle: platformNeedle });
       src = src.replace(
         platformNeedle,
-        'Nf=(e,t)=>{const JO_FORCED_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM;if(["rgl","egs"].includes(JO_FORCED_PLATFORM))return JO_FORCED_PLATFORM;const n=e?.replace("GTA5.exe","");'
+        'Nf=(e,t)=>{const JO_FORCED_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM;if(["steam","rgl","egs"].includes(JO_FORCED_PLATFORM))return JO_FORCED_PLATFORM;const n=e?.replace("GTA5.exe","");'
       );
       compatPatched = true;
     }
