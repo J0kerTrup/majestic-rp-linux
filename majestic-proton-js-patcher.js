@@ -86,6 +86,7 @@ if (!root) {
 const marker = "MAJESTIC_PROTON_PATCH_V2";
 const indexCompatMarker = "MAJESTIC_PROTON_INDEX_COMPAT_V4";
 const directMarker = "MAJESTIC_PROTON_DIRECT_PATCH_V1";
+const sourceMarker = "MAJESTIC_PROTON_SOURCE_PATCH_V1";
 const asarBin = process.env.ASAR_BIN || "asar";
 
 logInfo("Patcher", "Starting Majestic Proton JS patcher", {
@@ -130,8 +131,13 @@ function write(file, data) {
   logSuccess("Files", "Text file written", { file });
 }
 
+function commandParts(command) {
+  if (exists(command)) return [command];
+  return command.trim().split(/\s+/);
+}
+
 function run(command, args) {
-  const [cmd, ...preArgs] = command.trim().split(/\s+/);
+  const [cmd, ...preArgs] = commandParts(command);
   logInfo("Command", "Executing command", { command: `${command} ${args.join(" ")}`, args });
   const result = childProcess.spawnSync(cmd, [...preArgs, ...args], {
     stdio: "inherit",
@@ -157,6 +163,8 @@ function resolveTargets(inputPath) {
   const appAsarFromRoot = path.join(resolvedRoot, "app.asar");
   const siblingAppAsar = path.join(path.dirname(resolvedRoot), "app.asar");
   const extractedIndexPath = path.join(resolvedRoot, "dist", "electron", "main", "index.js");
+  const sourceFindGtaPath = path.join(resolvedRoot, "src", "electron", "main", "utils", "findGTA.js");
+  const sourcePatcherPath = path.join(resolvedRoot, "src", "electron", "main", "patcher.js");
 
   logInfo("Patcher", "Resolving patch targets", {
     inputPath,
@@ -164,7 +172,22 @@ function resolveTargets(inputPath) {
     appAsarFromRoot,
     siblingAppAsar,
     extractedIndexPath,
+    sourceFindGtaPath,
+    sourcePatcherPath,
   });
+
+  if (isFile(sourceFindGtaPath) && isFile(sourcePatcherPath)) {
+    const targets = {
+      mode: "source",
+      appRoot: resolvedRoot,
+      resourcesDir: path.dirname(resolvedRoot),
+      asarPath: "",
+      unpackedRoot: resolvedRoot,
+      cleanupRoot: "",
+    };
+    logSuccess("Patcher", "Resolved recovered source tree target", targets);
+    return targets;
+  }
 
   if (isFile(resolvedRoot) && path.basename(resolvedRoot) === "app.asar") {
     const resourcesDir = path.dirname(resolvedRoot);
@@ -271,6 +294,186 @@ function cleanup(targets) {
   } else {
     logDebug("Files", "Cleanup skipped because no temporary directory was created");
   }
+}
+
+function sourcePermissionValues() {
+  return permissions
+    .split(",")
+    .map((x) => Number.parseInt(x.trim(), 10))
+    .filter((x) => Number.isInteger(x) && x >= 0 && x <= 254);
+}
+
+function ensureSourceImports(src) {
+  let next = src;
+  if (!next.includes("import fs from 'fs';") && !next.includes('import fs from "fs";')) {
+    next = "import fs from 'fs';\n" + next;
+  }
+  if (!next.includes("import path from 'path';") && !next.includes('import path from "path";')) {
+    next = "import path from 'path';\n" + next;
+  }
+  return next;
+}
+
+function patchSourceFindGta(filePath) {
+  logInfo("Patcher", "Patching recovered source findGTA.js", { filePath });
+  let src = read(filePath);
+  if (src.includes(sourceMarker)) {
+    logDebug("Patcher", "Source findGTA.js patch marker already present", { marker: sourceMarker });
+    return;
+  }
+
+  const findNeedle = "export const findGTA = async () => {";
+  const platformNeedle = "export const findValidGTAPlatform = (gtaPath, potentialPlatform) => {";
+  if (!src.includes(findNeedle) || !src.includes(platformNeedle)) {
+    throw new Error("Could not find source findGTA patch anchors");
+  }
+
+  src = src.replace(
+    findNeedle,
+    `${findNeedle}
+    const JO_ENV_GTA = process.env.MAJESTIC_GTA_WIN_PATH;
+    const JO_ENV_PLATFORM = process.env.MAJESTIC_PROTON_PLATFORM;
+    if (JO_ENV_GTA && ['steam', 'rgl', 'egs'].includes(JO_ENV_PLATFORM) && checkForValidGTAPath(JO_ENV_GTA)) {
+        log.info('[findGTA] using forced Proton GTA path', JO_ENV_GTA, JO_ENV_PLATFORM);
+        return [JO_ENV_GTA, JO_ENV_PLATFORM];
+    }`
+  );
+  src = src.replace(
+    platformNeedle,
+    `${platformNeedle}
+    const JO_FORCED_PLATFORM = process.env.MAJESTIC_PROTON_PLATFORM;
+    if (['steam', 'rgl', 'egs'].includes(JO_FORCED_PLATFORM)) return JO_FORCED_PLATFORM;`
+  );
+  src = `/* ${sourceMarker}: force configured Proton GTA path and platform in recovered source tree. */\n` + src;
+  write(filePath, src);
+  logSuccess("Patcher", "Recovered source findGTA.js patched", { filePath });
+}
+
+function patchSourcePatcher(filePath) {
+  logInfo("Patcher", "Patching recovered source patcher.js", { filePath });
+  let src = read(filePath);
+  if (src.includes(sourceMarker)) {
+    logDebug("Patcher", "Source patcher.js patch marker already present", { marker: sourceMarker });
+    return;
+  }
+
+  const callNeedle = "const result = await patcher.patchMultiplayerWithProgress(launchConfigPath, (event) => {";
+  if (!src.includes(callNeedle)) {
+    throw new Error("Could not find source patcher native call anchor");
+  }
+
+  src = ensureSourceImports(src);
+  const helper = `/* ${sourceMarker}: adapt Majestic native patcher launch config under Proton. */
+const JO_PROTON_PERMISSIONS = ${JSON.stringify(sourcePermissionValues())};
+const JO_PROTON_GTA_PATH = process.env.MAJESTIC_GTA_WIN_PATH || 'G:\\\\';
+const JO_PROTON_PLATFORM = process.env.MAJESTIC_PROTON_PLATFORM || 'rgl';
+const JO_PROTON_DISABLE_CEF_GPU = process.env.MAJESTIC_DISABLE_CEF_GPU !== '0';
+
+function JO_isProtonRuntime() {
+    return process.platform === 'win32' && Boolean(
+        process.env.STEAM_COMPAT_DATA_PATH ||
+        process.env.STEAM_COMPAT_CLIENT_INSTALL_PATH ||
+        process.env.MAJESTIC_PROTON_PLATFORM ||
+        process.env.WINEPREFIX
+    );
+}
+
+function JO_patchJsonFile(filePath, patcherFn) {
+    if (!filePath || !fs.existsSync(filePath)) return false;
+    try {
+        const config = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const nextConfig = patcherFn(config);
+        if (!nextConfig) return false;
+        fs.writeFileSync(filePath, JSON.stringify(nextConfig, null, 2));
+        return true;
+    } catch (error) {
+        console.log('[LINUX-PROTON DEBUG] failed to patch json', { filePath, error });
+        return false;
+    }
+}
+
+function JO_patchPermissionCache(multiplayerPath) {
+    const cacheRoot = path.join(multiplayerPath || '', 'cache');
+    if (!fs.existsSync(cacheRoot)) return;
+    const data = Buffer.from([...JO_PROTON_PERMISSIONS, 255]);
+    for (const name of fs.readdirSync(cacheRoot)) {
+        const dir = path.join(cacheRoot, name);
+        if (fs.existsSync(dir) && fs.lstatSync(dir).isDirectory()) {
+            fs.writeFileSync(path.join(dir, 'permissions'), data);
+        }
+    }
+}
+
+function JO_adaptLaunchConfigForProton(launchOptionsPath) {
+    if (!JO_isProtonRuntime()) return;
+
+    let multiplayerConfigPath = '';
+    const launchConfigChanged = JO_patchJsonFile(launchOptionsPath, (config) => {
+        let changed = false;
+        if (String(config.gtaPath || '').startsWith('Z:\\\\') || String(config.gtaPath || '') !== JO_PROTON_GTA_PATH) {
+            config.gtaPath = JO_PROTON_GTA_PATH;
+            changed = true;
+        }
+        if (['steam', 'rgl', 'egs'].includes(JO_PROTON_PLATFORM) && config.gtaPlatform !== JO_PROTON_PLATFORM) {
+            config.gtaPlatform = JO_PROTON_PLATFORM;
+            changed = true;
+        }
+        if (config.debug !== false) {
+            config.debug = false;
+            changed = true;
+        }
+        if (JO_PROTON_DISABLE_CEF_GPU && config.cefUseHardwareAcceleration !== false) {
+            config.cefUseHardwareAcceleration = false;
+            changed = true;
+        }
+        if (config.multiplayerPath && config.configFileName) {
+            multiplayerConfigPath = path.join(config.multiplayerPath, config.configFileName);
+            JO_patchPermissionCache(config.multiplayerPath);
+        }
+        return changed ? config : null;
+    });
+
+    if (launchConfigChanged) console.log('[LINUX-PROTON DEBUG] launch config adapted for Proton');
+
+    if (multiplayerConfigPath) {
+        JO_patchJsonFile(multiplayerConfigPath, (config) => {
+            let changed = false;
+            if (String(config.gtapath || '').startsWith('Z:\\\\') || String(config.gtapath || '') !== JO_PROTON_GTA_PATH) {
+                config.gtapath = JO_PROTON_GTA_PATH;
+                changed = true;
+            }
+            if (String(config.gtaPath || '').startsWith('Z:\\\\') || String(config.gtaPath || '') !== JO_PROTON_GTA_PATH) {
+                config.gtaPath = JO_PROTON_GTA_PATH;
+                changed = true;
+            }
+            if (config.debug !== false) {
+                config.debug = false;
+                changed = true;
+            }
+            if (JO_PROTON_DISABLE_CEF_GPU && config.cefUseHardwareAcceleration !== false) {
+                config.cefUseHardwareAcceleration = false;
+                changed = true;
+            }
+            return changed ? config : null;
+        });
+    }
+}
+
+`;
+
+  const insertNeedle = "export const requestPatcherCancel = () => {";
+  if (!src.includes(insertNeedle)) {
+    throw new Error("Could not find source patcher helper insertion anchor");
+  }
+  src = src.replace(insertNeedle, helper + insertNeedle);
+  src = src.replace(callNeedle, `JO_adaptLaunchConfigForProton(launchConfigPath);\n        ${callNeedle}`);
+  write(filePath, src);
+  logSuccess("Patcher", "Recovered source patcher.js patched", { filePath, permissionValues: sourcePermissionValues() });
+}
+
+function patchSourceTree(appRoot) {
+  patchSourceFindGta(path.join(appRoot, "src", "electron", "main", "utils", "findGTA.js"));
+  patchSourcePatcher(path.join(appRoot, "src", "electron", "main", "patcher.js"));
 }
 
 function patchIndex(indexPath) {
@@ -586,17 +789,19 @@ parentPort.on('message', async (launchOptionsPath) => {
 let targets;
 try {
   targets = resolveTargets(root);
-  const indexPath = path.join(targets.appRoot, "dist", "electron", "main", "index.js");
-  const workerPath = path.join(targets.unpackedRoot, "dist", "electron", "main", "gamePatcher.js");
-  logDebug("Patcher", "Resolved patch file paths", { indexPath, workerPath });
-  extractAsar(targets);
-  patchIndex(indexPath);
-  patchWorker(workerPath);
-  repackAsar(targets);
+  if (targets.mode === "source") {
+    patchSourceTree(targets.appRoot);
+  } else {
+    const indexPath = path.join(targets.appRoot, "dist", "electron", "main", "index.js");
+    const workerPath = path.join(targets.unpackedRoot, "dist", "electron", "main", "gamePatcher.js");
+    logDebug("Patcher", "Resolved patch file paths", { indexPath, workerPath });
+    extractAsar(targets);
+    patchIndex(indexPath);
+    patchWorker(workerPath);
+    repackAsar(targets);
+  }
   logSuccess("Patcher", "Majestic Proton JS patch completed successfully", {
     mode: targets.mode,
-    indexPath,
-    workerPath,
   });
 } catch (error) {
   logError("Patcher", "Majestic Proton JS patch failed", {

@@ -72,6 +72,70 @@ die() {
   exit "$code"
 }
 
+platform_title() {
+  case "$1" in
+    steam) printf 'STEAM' ;;
+    rgl) printf 'ROCKSTAR GAMES LAUNCHER' ;;
+    egs) printf 'EPIC GAMES STORE' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+print_platform_banner() {
+  local configured="$1"
+  local selected="$2"
+  local detected="$3"
+  local gta_path="$4"
+  local platform_name
+  platform_name="$(platform_title "$selected")"
+  local border="============================================================"
+  {
+    printf '%s\n' "$border"
+    printf '                  MAJESTIC PLATFORM\n'
+    printf '%s\n' "$border"
+    printf ' CONFIG VALUE : MAJESTIC_PLATFORM=%s\n' "$configured"
+    printf ' DETECTED     : %s\n' "$(platform_title "$detected")"
+    printf ' ENABLED      : %s\n' "$platform_name"
+    printf ' GTA PATH     : %s\n' "$gta_path"
+    printf ' WINE DRIVE   : %s:\\\n' "${GTA_WINE_DRIVE^^}"
+    printf '%s\n' "$border"
+  } | tee -a "$LOG_FILE" >&2
+}
+
+compatdata_from_path() {
+  local file="$1"
+  if [[ "$file" == */pfx/* ]]; then
+    printf '%s\n' "${file%%/pfx/*}"
+  fi
+}
+
+path_is_in_active_prefix() {
+  local file="$1"
+  local active_prefix="$2"
+  [[ -n "$file" && -n "$active_prefix" ]] || return 1
+  local real_file real_prefix
+  real_file="$(realpath -m "$file")"
+  real_prefix="$(realpath -m "$active_prefix")"
+  [[ "$real_file" == "$real_prefix/"* ]]
+}
+
+print_prefix_banner() {
+  local compatdata="$1"
+  local app_id="$2"
+  local gta_path="$3"
+  local border="============================================================"
+  {
+    printf '%s\n' "$border"
+    printf '                  SINGLE PROTON PREFIX\n'
+    printf '%s\n' "$border"
+    printf ' APP ID       : %s\n' "${app_id:-unknown}"
+    printf ' COMPATDATA   : %s\n' "$compatdata"
+    printf ' GTA PATH     : %s\n' "$gta_path"
+    printf ' MAJESTIC     : WILL BE USED ONLY INSIDE THIS PREFIX\n'
+    printf '%s\n' "$border"
+  } | tee -a "$LOG_FILE" >&2
+}
+
 on_error() {
   local code=$?
   local command="${BASH_COMMAND:-unknown}"
@@ -96,16 +160,21 @@ GAME_HEIGHT="${GAME_HEIGHT:-1080}"
 GAME_WINDOWED="${GAME_WINDOWED:-1}"
 GAME_BORDERLESS="${GAME_BORDERLESS:-1}"
 DISABLE_CEF_GPU="${DISABLE_CEF_GPU:-1}"
-MAJESTIC_PLATFORM="${MAJESTIC_PLATFORM:-rgl}"
-GTA_WINE_DRIVE="${GTA_WINE_DRIVE:-g}"
+MAJESTIC_PLATFORM_WAS_EXPLICIT=0
+if [[ -n "${MAJESTIC_PLATFORM+x}" && -n "${MAJESTIC_PLATFORM:-}" && "${MAJESTIC_PLATFORM:-}" != "auto" ]]; then
+  MAJESTIC_PLATFORM_WAS_EXPLICIT=1
+fi
+MAJESTIC_PLATFORM="${MAJESTIC_PLATFORM:-auto}"
+GTA_WINE_DRIVE="${GTA_WINE_DRIVE:-d}"
 MAJESTIC_PERMISSIONS="${MAJESTIC_PERMISSIONS:-1,3,4}"
 RESET_ROCKSTAR_DOCUMENTS="${RESET_ROCKSTAR_DOCUMENTS:-0}"
 
 
 PROTON_VERB="${PROTON_VERB:-waitforexitandrun}"
 APP_ID="${APP_ID:-}"
-
-MAJESTIC_LAUNCHER_FLAGS="${MAJESTIC_LAUNCHER_FLAGS:---no-sandbox --disable-dev-shm-usage --disable-gpu-sandbox}"
+MAJESTIC_INSTALLER_URL="${MAJESTIC_INSTALLER_URL:-https://cdn.majestic-files.net/launcher/cis/MajesticLauncherSetup.exe}"
+MAJESTIC_INSTALLER_PATH="${MAJESTIC_INSTALLER_PATH:-$SCRIPT_DIR/cache/MajesticLauncherSetup.exe}"
+MAJESTIC_INSTALLER_ARGS="${MAJESTIC_INSTALLER_ARGS:-/S}"
 
 require_command() {
   local name="$1"
@@ -130,11 +199,32 @@ check_base_dependencies() {
   log_success "Base dependencies are available" "Dependencies"
 }
 
+check_installer_dependencies() {
+  log_info "Checking Majestic installer dependencies" "Dependencies"
+  if command -v curl >/dev/null 2>&1; then
+    log_success "Download tool is available" "Dependencies" "tool=curl path=$(command -v curl)"
+    return 0
+  fi
+  if command -v wget >/dev/null 2>&1; then
+    log_success "Download tool is available" "Dependencies" "tool=wget path=$(command -v wget)"
+    return 0
+  fi
+  die "Neither curl nor wget was found. Install curl or wget to download Majestic Launcher automatically."
+}
+
 validate_proton_verb() {
   log_debug "Validating Proton verb" "Proton" "PROTON_VERB=$PROTON_VERB"
   case "$PROTON_VERB" in
     run|waitforexitandrun|runinprefix) log_success "Proton verb is supported" "Proton" "PROTON_VERB=$PROTON_VERB" ;;
     *) die "Unsupported PROTON_VERB='$PROTON_VERB'. Use runinprefix, run or waitforexitandrun." ;;
+  esac
+}
+
+validate_majestic_platform() {
+  log_debug "Validating Majestic platform" "GTA" "MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM"
+  case "$MAJESTIC_PLATFORM" in
+    auto|rgl|steam|egs) log_success "Majestic platform value is supported" "GTA" "MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM" ;;
+    *) die "Unsupported MAJESTIC_PLATFORM='$MAJESTIC_PLATFORM'. Use auto, rgl, steam or egs." ;;
   esac
 }
 
@@ -177,11 +267,20 @@ find_steam_root() {
       return
     }
   done
+  if [[ -n "${PROTON_PATH:-}" && -x "${PROTON_PATH:-}" && -n "${STEAM_COMPAT_DATA_PATH:-}" && -d "${STEAM_COMPAT_DATA_PATH:-}/pfx" ]]; then
+    log_warn "Steam folder was not found; using configured Proton path and compatdata without Steam root" "Steam" "PROTON_PATH=$PROTON_PATH STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH"
+    printf '%s\n' ""
+    return
+  fi
   die "Steam folder was not found. Set STEAM_ROOT in $CONFIG_FILE."
 }
 
 get_steam_library_roots() {
   local base="$1"
+  if [[ -z "$base" || ! -d "$base/steamapps" ]]; then
+    log_debug "Steam library root skipped because base is empty or invalid" "Steam" "root=$base"
+    return 0
+  fi
   log_debug "Adding Steam library root" "Steam" "root=$base"
   printf '%s\n' "$base"
   local vdf="$base/steamapps/libraryfolders.vdf"
@@ -204,9 +303,19 @@ get_steam_library_roots() {
 find_compatdata() {
   log_info "Checking Proton compatdata prefix" "Environment" "STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH:-} APP_ID=$APP_ID"
   if [[ -n "${STEAM_COMPAT_DATA_PATH:-}" && -d "${STEAM_COMPAT_DATA_PATH:-}/pfx" ]]; then
+    if [[ -n "${MAJESTIC_EXE:-}" && -f "${MAJESTIC_EXE:-}" && "$MAJESTIC_EXE" == */pfx/* ]]; then
+      local majestic_compat="${MAJESTIC_EXE%%/pfx/*}"
+      if [[ "$majestic_compat" != "$STEAM_COMPAT_DATA_PATH" ]]; then
+        log_warn "Configured Majestic executable is in a different Proton prefix; keeping STEAM_COMPAT_DATA_PATH" "Environment" "STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH MAJESTIC_COMPATDATA=$majestic_compat"
+      fi
+    fi
     log_success "Using configured Proton compatdata prefix" "Environment" "COMPATDATA=$STEAM_COMPAT_DATA_PATH"
     printf '%s\n' "$STEAM_COMPAT_DATA_PATH"
     return
+  fi
+
+  if [[ -z "$STEAM_ROOT" ]]; then
+    die "GTA V Proton prefix was not found. Set STEAM_COMPAT_DATA_PATH in $CONFIG_FILE."
   fi
 
   local root candidate
@@ -231,16 +340,14 @@ find_compatdata() {
     log_debug "Scanning compatdata root" "Environment" "root=$compat_root"
     while IFS= read -r candidate; do
       log_debug "Inspecting compatdata candidate" "Environment" "candidate=$candidate"
-      if [[ -f "$candidate/pfx/drive_c/users/steamuser/AppData/Local/MajesticLauncher/Majestic Launcher.exe" ]]; then
-        log_success "Compatdata prefix found by Majestic Launcher marker" "Environment" "COMPATDATA=$candidate"
-        printf '%s\n' "$candidate"
-        return
-      fi
       if [[ -f "$candidate/pfx/drive_c/Program Files/Rockstar Games/Launcher/Launcher.exe" ]] ||
          [[ -d "$candidate/pfx/drive_c/users/steamuser/Documents/Rockstar Games/GTA V" ]]; then
         log_success "Compatdata prefix found by Rockstar/GTA marker" "Environment" "COMPATDATA=$candidate"
         printf '%s\n' "$candidate"
         return
+      fi
+      if [[ -f "$candidate/pfx/drive_c/users/steamuser/AppData/Local/MajesticLauncher/Majestic Launcher.exe" ]]; then
+        log_debug "Ignoring Majestic-only prefix while searching GTA prefix" "Environment" "candidate=$candidate"
       fi
     done < <(find "$compat_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
   done < <(get_steam_library_roots "$STEAM_ROOT")
@@ -270,11 +377,6 @@ find_gta_manifest() {
       log_debug "Checking Steam manifest" "GTA" "manifest=$manifest installdir=$installdir appdir=$appdir"
       [[ "$appdir" == "$gta_real" ]] && {
         log_success "GTA V Steam manifest found by path match" "GTA" "manifest=$manifest"
-        printf '%s\n' "$manifest"
-        return
-      }
-      [[ -f "$appdir/GTA5.exe" && "$installdir" == "Grand Theft Auto V" ]] && {
-        log_success "GTA V Steam manifest found by executable marker" "GTA" "manifest=$manifest"
         printf '%s\n' "$manifest"
         return
       }
@@ -368,6 +470,9 @@ find_proton() {
     printf '%s\n' "$PROTON_PATH"
     return
   fi
+  if [[ -z "$STEAM_ROOT" ]]; then
+    die "Proton was not found. Set PROTON_PATH in $CONFIG_FILE when STEAM_ROOT is unavailable."
+  fi
   local candidates=()
   local root
 
@@ -420,23 +525,113 @@ find_proton() {
 find_majestic_exe() {
   log_info "Searching Majestic Launcher executable" "Majestic" "MAJESTIC_EXE=${MAJESTIC_EXE:-}"
   if [[ -n "${MAJESTIC_EXE:-}" && -f "${MAJESTIC_EXE:-}" ]]; then
-    log_success "Using configured Majestic Launcher executable" "Majestic" "MAJESTIC_EXE=$MAJESTIC_EXE"
-    printf '%s\n' "$MAJESTIC_EXE"
-    return
+    if path_is_in_active_prefix "$MAJESTIC_EXE" "$COMPATDATA"; then
+      log_success "Using configured Majestic Launcher executable inside active GTA prefix" "Majestic" "MAJESTIC_EXE=$MAJESTIC_EXE COMPATDATA=$COMPATDATA"
+      printf '%s\n' "$MAJESTIC_EXE"
+      return
+    fi
+    log_warn "Configured Majestic Launcher executable is outside active GTA prefix; ignoring it" "Majestic" "MAJESTIC_EXE=$MAJESTIC_EXE MAJESTIC_COMPATDATA=$(compatdata_from_path "$MAJESTIC_EXE") ACTIVE_COMPATDATA=$COMPATDATA"
   fi
   if [[ -f "$SCRIPT_DIR/Majestic Launcher.exe" ]]; then
-    log_success "Majestic Launcher executable found next to script" "Majestic" "MAJESTIC_EXE=$SCRIPT_DIR/Majestic Launcher.exe"
-    printf '%s\n' "$SCRIPT_DIR/Majestic Launcher.exe"
+    local script_exe="$SCRIPT_DIR/Majestic Launcher.exe"
+    if path_is_in_active_prefix "$script_exe" "$COMPATDATA"; then
+      log_success "Majestic Launcher executable found next to script inside active GTA prefix" "Majestic" "MAJESTIC_EXE=$script_exe"
+      printf '%s\n' "$script_exe"
+      return
+    fi
+    log_warn "Majestic Launcher executable next to script is outside active GTA prefix; ignoring it" "Majestic" "MAJESTIC_EXE=$script_exe ACTIVE_COMPATDATA=$COMPATDATA"
+  fi
+  local candidates=(
+    "$COMPATDATA/pfx/drive_c/users/steamuser/AppData/Local/MajesticLauncher/Majestic Launcher.exe"
+    "$COMPATDATA/pfx/drive_c/users/steamuser/AppData/Local/Programs/Majestic Launcher/Majestic Launcher.exe"
+    "$COMPATDATA/pfx/drive_c/users/steamuser/AppData/Local/Programs/majestic-launcher/Majestic Launcher.exe"
+    "$COMPATDATA/pfx/drive_c/Program Files/Majestic Launcher/Majestic Launcher.exe"
+    "$COMPATDATA/pfx/drive_c/Program Files (x86)/Majestic Launcher/Majestic Launcher.exe"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    log_debug "Checking Majestic Launcher in Proton prefix" "Majestic" "candidate=$candidate"
+    [[ -f "$candidate" ]] && {
+      log_success "Majestic Launcher executable found in Proton prefix" "Majestic" "MAJESTIC_EXE=$candidate"
+      printf '%s\n' "$candidate"
+      return
+    }
+  done
+  log_warn "Majestic Launcher.exe was not found" "Majestic" "checked_config=${MAJESTIC_EXE:-} checked_prefix=$COMPATDATA"
+  return 1
+}
+
+download_majestic_installer() {
+  log_info "Checking Majestic Launcher installer" "Installer" "url=$MAJESTIC_INSTALLER_URL path=$MAJESTIC_INSTALLER_PATH"
+  if [[ -s "$MAJESTIC_INSTALLER_PATH" ]]; then
+    log_success "Using cached Majestic Launcher installer" "Installer" "path=$MAJESTIC_INSTALLER_PATH"
+    printf '%s\n' "$MAJESTIC_INSTALLER_PATH"
     return
   fi
-  local candidate="$COMPATDATA/pfx/drive_c/users/steamuser/AppData/Local/MajesticLauncher/Majestic Launcher.exe"
-  log_debug "Checking Majestic Launcher in Proton prefix" "Majestic" "candidate=$candidate"
-  [[ -f "$candidate" ]] && {
-    log_success "Majestic Launcher executable found in Proton prefix" "Majestic" "MAJESTIC_EXE=$candidate"
-    printf '%s\n' "$candidate"
-    return
-  }
-  die "Majestic Launcher.exe was not found. Put this script next to it or set MAJESTIC_EXE."
+
+  check_installer_dependencies
+  mkdir -p "$(dirname "$MAJESTIC_INSTALLER_PATH")"
+  if command -v curl >/dev/null 2>&1; then
+    log_info "Downloading Majestic Launcher installer" "Installer" "command=curl -fL --retry 3 -o $MAJESTIC_INSTALLER_PATH $MAJESTIC_INSTALLER_URL"
+    curl -fL --retry 3 --connect-timeout 20 -o "$MAJESTIC_INSTALLER_PATH" "$MAJESTIC_INSTALLER_URL"
+  else
+    log_info "Downloading Majestic Launcher installer" "Installer" "command=wget -O $MAJESTIC_INSTALLER_PATH $MAJESTIC_INSTALLER_URL"
+    wget -O "$MAJESTIC_INSTALLER_PATH" "$MAJESTIC_INSTALLER_URL"
+  fi
+  [[ -s "$MAJESTIC_INSTALLER_PATH" ]] || die "Majestic Launcher installer download failed: $MAJESTIC_INSTALLER_PATH"
+  log_success "Majestic Launcher installer downloaded" "Installer" "path=$MAJESTIC_INSTALLER_PATH"
+  printf '%s\n' "$MAJESTIC_INSTALLER_PATH"
+}
+
+run_proton_installer() {
+  local installer="$1"
+  shift || true
+  local prefix_installer="$COMPATDATA/pfx/drive_c/MajesticLauncherSetup.exe"
+  mkdir -p "$(dirname "$prefix_installer")"
+  cp -f "$installer" "$prefix_installer"
+  log_info "Running Majestic Launcher installer through Proton" "Installer" "PROTON=$PROTON COMPATDATA=$COMPATDATA installer=$prefix_installer args=$*"
+  STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}" \
+  STEAM_COMPAT_DATA_PATH="$COMPATDATA" \
+  STEAM_COMPAT_APP_ID="${STEAM_COMPAT_APP_ID:-$APP_ID}" \
+  SteamAppId="${SteamAppId:-$APP_ID}" \
+  SteamGameId="${SteamGameId:-$APP_ID}" \
+  "$PROTON" waitforexitandrun "C:\\MajesticLauncherSetup.exe" "$@"
+}
+
+install_majestic_launcher() {
+  local installer
+  installer="$(download_majestic_installer)"
+  [[ -f "$installer" ]] || die "Majestic Launcher installer is missing after download: $installer"
+
+  log_info "Installing Majestic Launcher because executable was not found" "Installer" "installer=$installer"
+  if [[ -n "$MAJESTIC_INSTALLER_ARGS" ]]; then
+    # shellcheck disable=SC2206
+    local silent_args=( $MAJESTIC_INSTALLER_ARGS )
+    if run_proton_installer "$installer" "${silent_args[@]}"; then
+      log_success "Silent Majestic Launcher installer finished" "Installer"
+    else
+      log_warn "Silent Majestic Launcher installer returned non-zero; interactive install will be tried" "Installer"
+    fi
+  fi
+
+  if find_majestic_exe >/dev/null 2>&1; then
+    log_success "Majestic Launcher executable found after silent installation" "Installer"
+    return 0
+  fi
+
+  log_warn "Majestic Launcher executable was not found after silent install; starting interactive installer" "Installer"
+  if run_proton_installer "$installer"; then
+    log_success "Interactive Majestic Launcher installer finished" "Installer"
+  else
+    log_warn "Interactive Majestic Launcher installer returned non-zero; checking whether executable was created anyway" "Installer"
+  fi
+
+  if find_majestic_exe >/dev/null 2>&1; then
+    log_success "Majestic Launcher executable found after interactive installation" "Installer"
+    return 0
+  fi
+
+  die "Majestic Launcher installation completed but Majestic Launcher.exe was not found. Set MAJESTIC_EXE in $CONFIG_FILE."
 }
 
 patch_json_file() {
@@ -488,6 +683,29 @@ write_commandline() {
     printf '%s\n' "-ignoreDifferentVideoCard"
   } > "$file"
   log_success "GTA commandline.txt written" "GTA" "file=$file width=$GAME_WIDTH height=$GAME_HEIGHT windowed=$GAME_WINDOWED borderless=$GAME_BORDERLESS"
+}
+
+cleanup_gta_wine_drives() {
+  local dosdevices="$COMPATDATA/pfx/dosdevices"
+  local selected="${GTA_WINE_DRIVE,,}:"
+  local target
+  target="$(realpath -m "$GTA_PATH")"
+
+  log_info "Cleaning stale Wine GTA drive mappings" "Wine" "selected=${selected^^} target=$target"
+  local link link_name link_target
+  shopt -s nullglob
+  for link in "$dosdevices"/?:; do
+    link_name="$(basename "$link")"
+    [[ "$link_name" == "$selected" ]] && continue
+    [[ "$link_name" == "c:" || "$link_name" == "z:" ]] && continue
+    [[ -L "$link" ]] || continue
+    link_target="$(realpath -m "$link")"
+    if [[ "$link_target" == "$target" ]]; then
+      log_warn "Removing stale duplicate GTA Wine drive mapping" "Wine" "drive=${link_name^^} target=$link_target"
+      rm -f "$link"
+    fi
+  done
+  shopt -u nullglob
 }
 
 patch_runtime_configs() {
@@ -570,6 +788,28 @@ find_asar() {
   printf '%s\n' "$found"
 }
 
+ensure_asar() {
+  local asar_bin
+  asar_bin="$(find_asar)"
+  if [[ -n "$asar_bin" ]]; then
+    printf '%s\n' "$asar_bin"
+    return 0
+  fi
+
+  if [[ -f "$SCRIPT_DIR/package.json" ]] && command -v npm >/dev/null 2>&1; then
+    log_warn "asar tool not found; installing local npm dependencies for app.asar patching" "Patcher" "directory=$SCRIPT_DIR"
+    (cd "$SCRIPT_DIR" && npm install --no-audit --no-fund)
+    asar_bin="$(find_asar)"
+    if [[ -n "$asar_bin" ]]; then
+      log_success "asar tool became available after npm install" "Patcher" "asar=$asar_bin"
+      printf '%s\n' "$asar_bin"
+      return 0
+    fi
+  fi
+
+  die "asar tool was not found and could not be installed automatically. Install it with: npm install -g @electron/asar"
+}
+
 patch_asar_app() {
   local resources="$MAJESTIC_DIR/resources"
   local app_asar="$resources/app.asar"
@@ -583,11 +823,7 @@ patch_asar_app() {
   log_info "JS patcher verified" "Patcher" "patcher=$PATCHER_FILE required_marker=$PATCHER_REQUIRED_MARKER"
 
   local asar_bin
-  asar_bin="$(find_asar)"
-  [[ -n "$asar_bin" ]] || {
-    log_warn "asar tool not found; install @electron/asar or put asar in PATH, then rerun for full JS patch" "Patcher"
-    return 0
-  }
+  asar_bin="$(ensure_asar)"
 
   local tmp="$resources/app.asar.majestic-proton-work"
   log_info "Preparing temporary app.asar workspace" "Patcher" "tmp=$tmp"
@@ -609,21 +845,29 @@ patch_asar_app() {
   log_success "Majestic Launcher JS patch completed" "Patcher" "app_asar=$app_asar"
 }
 
-log_debug "Resolved configuration values" "Environment" "GAME_WIDTH=$GAME_WIDTH GAME_HEIGHT=$GAME_HEIGHT GAME_WINDOWED=$GAME_WINDOWED GAME_BORDERLESS=$GAME_BORDERLESS DISABLE_CEF_GPU=$DISABLE_CEF_GPU MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM GTA_WINE_DRIVE=$GTA_WINE_DRIVE MAJESTIC_PERMISSIONS=$MAJESTIC_PERMISSIONS RESET_ROCKSTAR_DOCUMENTS=$RESET_ROCKSTAR_DOCUMENTS PROTON_VERB=$PROTON_VERB APP_ID=$APP_ID MAJESTIC_LAUNCHER_FLAGS=$MAJESTIC_LAUNCHER_FLAGS"
+log_debug "Resolved configuration values" "Environment" "GAME_WIDTH=$GAME_WIDTH GAME_HEIGHT=$GAME_HEIGHT GAME_WINDOWED=$GAME_WINDOWED GAME_BORDERLESS=$GAME_BORDERLESS DISABLE_CEF_GPU=$DISABLE_CEF_GPU MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM GTA_WINE_DRIVE=$GTA_WINE_DRIVE MAJESTIC_PERMISSIONS=$MAJESTIC_PERMISSIONS RESET_ROCKSTAR_DOCUMENTS=$RESET_ROCKSTAR_DOCUMENTS PROTON_VERB=$PROTON_VERB APP_ID=$APP_ID"
 check_base_dependencies
 validate_proton_verb
+validate_majestic_platform
 
 STEAM_ROOT="$(find_steam_root)"
 GTA_PATH="$(find_gta_path)"
 
 # Auto-detect real GTA V platform and warn if conf value differs
+CONFIGURED_MAJESTIC_PLATFORM="$MAJESTIC_PLATFORM"
 DETECTED_GTA_PLATFORM="$(detect_gta_platform "$GTA_PATH")"
 log_info "Detected GTA V platform from files" "GTA" "detected=$DETECTED_GTA_PLATFORM configured=$MAJESTIC_PLATFORM GTA_PATH=$GTA_PATH"
-if [[ "$MAJESTIC_PLATFORM" = "rgl" && "$DETECTED_GTA_PLATFORM" != "rgl" ]]; then
-  log_warn "MAJESTIC_PLATFORM=rgl in conf but detected platform is '$DETECTED_GTA_PLATFORM'. Consider setting MAJESTIC_PLATFORM=$DETECTED_GTA_PLATFORM in $CONFIG_FILE." "GTA"
+if [[ "$MAJESTIC_PLATFORM" = "auto" ]]; then
+  MAJESTIC_PLATFORM="$DETECTED_GTA_PLATFORM"
+  log_info "Auto-selected MAJESTIC_PLATFORM from GTA files" "GTA" "MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM"
+elif [[ "$MAJESTIC_PLATFORM_WAS_EXPLICIT" = "0" && "$MAJESTIC_PLATFORM" = "rgl" && "$DETECTED_GTA_PLATFORM" != "rgl" ]]; then
+  log_warn "Default MAJESTIC_PLATFORM=rgl but detected platform differs; applying detected platform" "GTA" "detected=$DETECTED_GTA_PLATFORM"
   MAJESTIC_PLATFORM="$DETECTED_GTA_PLATFORM"
   log_info "Auto-corrected MAJESTIC_PLATFORM to '$MAJESTIC_PLATFORM'" "GTA"
+elif [[ "$MAJESTIC_PLATFORM" != "$DETECTED_GTA_PLATFORM" ]]; then
+  log_warn "Configured MAJESTIC_PLATFORM differs from detected GTA files; keeping explicit value" "GTA" "configured=$MAJESTIC_PLATFORM detected=$DETECTED_GTA_PLATFORM"
 fi
+print_platform_banner "$CONFIGURED_MAJESTIC_PLATFORM" "$MAJESTIC_PLATFORM" "$DETECTED_GTA_PLATFORM" "$GTA_PATH"
 
 # For EGS: create GTAVLauncher.exe → GTA5.exe symlink so the launcher can invoke it via Wine
 if [[ "$MAJESTIC_PLATFORM" = "egs" ]]; then
@@ -646,6 +890,7 @@ if [[ -z "$APP_ID" ]]; then
   APP_ID="$(basename "$COMPATDATA")"
   log_info "Using AppID from detected compatdata folder" "Environment" "APP_ID=$APP_ID COMPATDATA=$COMPATDATA"
 fi
+print_prefix_banner "$COMPATDATA" "$APP_ID" "$GTA_PATH"
 
 if command -v protontricks >/dev/null 2>&1; then
   log_info "Forcing Windows 10 for Proton prefix" "Proton" "APP_ID=$APP_ID"
@@ -655,13 +900,17 @@ else
 fi
 
 PROTON="$(find_proton)"
-MAJESTIC_EXE="$(find_majestic_exe)"
+if ! MAJESTIC_EXE="$(find_majestic_exe)"; then
+  install_majestic_launcher
+  MAJESTIC_EXE="$(find_majestic_exe)" || die "Majestic Launcher.exe was not found after installation. Set MAJESTIC_EXE in $CONFIG_FILE."
+fi
 MAJESTIC_DIR="$(dirname "$MAJESTIC_EXE")"
 
 log_debug "Resolved launch paths" "Environment" "STEAM_ROOT=$STEAM_ROOT COMPATDATA=$COMPATDATA GTA_PATH=$GTA_PATH MAJESTIC_EXE=$MAJESTIC_EXE MAJESTIC_DIR=$MAJESTIC_DIR PROTON=$PROTON"
 
 log_info "Creating Wine dosdevices directory" "Wine" "directory=$COMPATDATA/pfx/dosdevices"
 mkdir -p "$COMPATDATA/pfx/dosdevices"
+cleanup_gta_wine_drives
 log_info "Mapping Wine drive to GTA V" "Wine" "command=ln -sfn $GTA_PATH $COMPATDATA/pfx/dosdevices/${GTA_WINE_DRIVE}:"
 ln -sfn "$GTA_PATH" "$COMPATDATA/pfx/dosdevices/${GTA_WINE_DRIVE}:"
 log_success "Wine drive mapped to GTA V" "Wine" "drive=${GTA_WINE_DRIVE^^}: target=$GTA_PATH"
@@ -683,14 +932,11 @@ export MAJESTIC_PROTON_PLATFORM="$MAJESTIC_PLATFORM"
 export MAJESTIC_GTA_WIN_PATH="${GTA_WINE_DRIVE^^}:\\"
 export MAJESTIC_DISABLE_CEF_GPU="$DISABLE_CEF_GPU"
 
-export ELECTRON_DISABLE_SANDBOX="${ELECTRON_DISABLE_SANDBOX:-1}"
-export ELECTRON_DISABLE_GPU="${ELECTRON_DISABLE_GPU:-1}"
-
-log_debug "Exported Proton and Majestic environment" "Environment" "STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID SteamAppId=$SteamAppId SteamGameId=$SteamGameId WINEDLLOVERRIDES=$WINEDLLOVERRIDES MAJESTIC_PROTON_PLATFORM=$MAJESTIC_PROTON_PLATFORM MAJESTIC_GTA_WIN_PATH=$MAJESTIC_GTA_WIN_PATH MAJESTIC_DISABLE_CEF_GPU=$MAJESTIC_DISABLE_CEF_GPU ELECTRON_DISABLE_SANDBOX=$ELECTRON_DISABLE_SANDBOX ELECTRON_DISABLE_GPU=$ELECTRON_DISABLE_GPU"
+log_debug "Exported Proton and Majestic environment" "Environment" "STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID SteamAppId=$SteamAppId SteamGameId=$SteamGameId WINEDLLOVERRIDES=$WINEDLLOVERRIDES MAJESTIC_PROTON_PLATFORM=$MAJESTIC_PROTON_PLATFORM MAJESTIC_GTA_WIN_PATH=$MAJESTIC_GTA_WIN_PATH MAJESTIC_DISABLE_CEF_GPU=$MAJESTIC_DISABLE_CEF_GPU"
 log_info "Changing working directory to Majestic Launcher directory" "Launcher" "directory=$MAJESTIC_DIR"
 cd "$MAJESTIC_DIR"
 log_info "Starting Majestic Launcher with Proton" "Launcher" "PROTON_VERB=$PROTON_VERB"
-log_debug "Majestic launch command" "Launcher" "command=$PROTON $PROTON_VERB $MAJESTIC_EXE $MAJESTIC_LAUNCHER_FLAGS platform=$MAJESTIC_PLATFORM gta_win_path=${GTA_WINE_DRIVE^^}:\\"
+log_debug "Majestic launch command" "Launcher" "command=$PROTON $PROTON_VERB $MAJESTIC_EXE platform=$MAJESTIC_PLATFORM gta_win_path=${GTA_WINE_DRIVE^^}:\\"
 log_success "Launcher preparation completed; handing control to Proton" "Launcher"
 
-exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE" $MAJESTIC_LAUNCHER_FLAGS
+exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE"
