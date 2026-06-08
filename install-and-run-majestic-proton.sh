@@ -184,6 +184,8 @@ MAJESTIC_INSTALLER_PATH="${MAJESTIC_INSTALLER_PATH:-$SCRIPT_DIR/cache/MajesticLa
 MAJESTIC_INSTALLER_ARGS="${MAJESTIC_INSTALLER_ARGS:-/S}"
 MAJESTIC_INSTALLER_TIMEOUT="${MAJESTIC_INSTALLER_TIMEOUT:-30}"
 MAJESTIC_SOURCE_ROOT="${MAJESTIC_SOURCE_ROOT:-}"
+DISCORD_BRIDGE_URL="${DISCORD_BRIDGE_URL:-https://github.com/0e4ef622/wine-discord-ipc-bridge/releases/download/v0.0.3/winediscordipcbridge.exe}"
+DISCORD_BRIDGE_PATH="${DISCORD_BRIDGE_PATH:-$SCRIPT_DIR/cache/winediscordipcbridge.exe}"
 
 require_command() {
   local name="$1"
@@ -742,6 +744,43 @@ find_majestic_exe() {
   return 1
 }
 
+download_discord_bridge() {
+  log_info "Checking Discord RPC bridge" "Discord" "url=$DISCORD_BRIDGE_URL path=$DISCORD_BRIDGE_PATH"
+  if [[ -s "$DISCORD_BRIDGE_PATH" ]]; then
+    log_success "Using cached Discord RPC bridge" "Discord" "path=$DISCORD_BRIDGE_PATH"
+    return
+  fi
+
+  check_installer_dependencies
+  mkdir -p "$(dirname "$DISCORD_BRIDGE_PATH")"
+  if command -v curl >/dev/null 2>&1; then
+    log_info "Downloading Discord RPC bridge" "Discord" "command=curl -fL --retry 3 -o $DISCORD_BRIDGE_PATH $DISCORD_BRIDGE_URL"
+    curl -fL --retry 3 --connect-timeout 20 -o "$DISCORD_BRIDGE_PATH" "$DISCORD_BRIDGE_URL" || true
+  else
+    log_info "Downloading Discord RPC bridge" "Discord" "command=wget -O $DISCORD_BRIDGE_PATH $DISCORD_BRIDGE_URL"
+    wget -O "$DISCORD_BRIDGE_PATH" "$DISCORD_BRIDGE_URL" || true
+  fi
+  [[ -s "$DISCORD_BRIDGE_PATH" ]] || log_warn "Discord RPC bridge download failed" "Discord"
+}
+
+run_discord_bridge() {
+  echo "Starting rpcbridge"
+  if [[ -s "$DISCORD_BRIDGE_PATH" ]]; then
+    echo "Foun bridge path"
+    local prefix_bridge="$COMPATDATA/pfx/drive_c/winediscordipcbridge.exe"
+    cp -f "$DISCORD_BRIDGE_PATH" "$prefix_bridge"
+    log_info "Starting Discord RPC bridge through Proton" "Discord"
+    STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}" \
+    STEAM_COMPAT_DATA_PATH="$COMPATDATA" \
+    STEAM_COMPAT_APP_ID="${STEAM_COMPAT_APP_ID:-$APP_ID}" \
+    SteamAppId="${SteamAppId:-$APP_ID}" \
+    SteamGameId="${SteamGameId:-$APP_ID}" \
+    "$PROTON" run "C:\\winediscordipcbridge.exe" >/dev/null 2>&1 &
+    DISCORD_BRIDGE_PID=$!
+    log_success "Discord RPC bridge started in background" "Discord" "pid=$DISCORD_BRIDGE_PID"
+  fi
+}
+
 download_majestic_installer() {
   log_info "Checking Majestic Launcher installer" "Installer" "url=$MAJESTIC_INSTALLER_URL path=$MAJESTIC_INSTALLER_PATH"
   if [[ -s "$MAJESTIC_INSTALLER_PATH" ]]; then
@@ -1150,6 +1189,8 @@ patch_settings_xml "$COMPATDATA/pfx/drive_c/users/steamuser/Documents/Rockstar G
 patch_runtime_configs
 reset_rockstar_documents
 patch_asar_app
+download_discord_bridge
+
 if [[ "$MAJESTIC_PLATFORM" = "steam" ]]; then
   log_info "Steam flow selected" "Steam" "flow=steam APP_ID=$APP_ID STEAM_ROOT=$STEAM_ROOT PROTON=$PROTON COMPATDATA=$COMPATDATA GTA_PATH=$GTA_PATH launch_exe=$MAJESTIC_EXE"
   if [[ "$(basename "$COMPATDATA")" != "$GTA_STEAM_APP_ID" ]]; then
@@ -1169,4 +1210,11 @@ fi
 log_debug "Majestic launch command" "Launcher" "flow=$MAJESTIC_PLATFORM command=$PROTON $PROTON_VERB $MAJESTIC_EXE ${launcher_args[*]:-} platform=$MAJESTIC_PLATFORM gta_win_path=${GTA_WINE_DRIVE^^}:\\"
 log_success "Launcher preparation completed; handing control to Proton" "Launcher"
 
+run_discord_bridge
+
 exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE" "${launcher_args[@]}"
+
+if [[ -n "${DISCORD_BRIDGE_PID:-}" ]]; then
+  log_info "Stopping Discord RPC bridge" "Discord" "pid=$DISCORD_BRIDGE_PID"
+  kill "$DISCORD_BRIDGE_PID" 2>/dev/null || true
+fi
