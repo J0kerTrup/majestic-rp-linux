@@ -448,6 +448,15 @@ write_commandline() {
   log_success "GTA commandline.txt written" "GTA" "file=$file width=$GAME_WIDTH height=$GAME_HEIGHT windowed=$GAME_WINDOWED borderless=$GAME_BORDERLESS"
 }
 
+write_steam_appid() {
+  local dir="$1"
+  local appid="$2"
+  local file="$dir/steam_appid.txt"
+  log_info "Writing steam_appid.txt for Rockstar Launcher Steam auth" "Steam" "file=$file appid=$appid"
+  printf '%s' "$appid" > "$file"
+  log_success "steam_appid.txt written" "Steam" "file=$file appid=$appid"
+}
+
 patch_runtime_configs() {
   log_info "Checking Majestic runtime configuration files" "Majestic"
   local mp_config="$COMPATDATA/pfx/drive_c/users/steamuser/AppData/Roaming/majestic-launcher/Multiplayer/majestic.json"
@@ -616,12 +625,16 @@ patch_runtime_configs
 reset_rockstar_documents
 patch_asar_app
 
+write_steam_appid "$GTA_PATH" "271590"
+write_steam_appid "$MAJESTIC_DIR" "271590"
+
 export STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}"
 export STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH:-$COMPATDATA}"
 export STEAM_COMPAT_APP_ID="${STEAM_COMPAT_APP_ID:-$APP_ID}"
 export SteamAppId="${SteamAppId:-$APP_ID}"
 export SteamGameId="${SteamGameId:-$APP_ID}"
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-winegstreamer=d}"
+export WINEPREFIX="${WINEPREFIX:-$COMPATDATA/pfx}"
 
 export MAJESTIC_PROTON_PLATFORM="$MAJESTIC_PLATFORM"
 export MAJESTIC_GTA_WIN_PATH="${GTA_WINE_DRIVE^^}:\\"
@@ -630,11 +643,11 @@ export MAJESTIC_DISABLE_CEF_GPU="$DISABLE_CEF_GPU"
 export ELECTRON_DISABLE_SANDBOX="${ELECTRON_DISABLE_SANDBOX:-1}"
 export ELECTRON_DISABLE_GPU="${ELECTRON_DISABLE_GPU:-1}"
 
-log_debug "Exported Proton and Majestic environment" "Environment" "STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID SteamAppId=$SteamAppId SteamGameId=$SteamGameId WINEDLLOVERRIDES=$WINEDLLOVERRIDES MAJESTIC_PROTON_PLATFORM=$MAJESTIC_PROTON_PLATFORM MAJESTIC_GTA_WIN_PATH=$MAJESTIC_GTA_WIN_PATH MAJESTIC_DISABLE_CEF_GPU=$MAJESTIC_DISABLE_CEF_GPU ELECTRON_DISABLE_SANDBOX=$ELECTRON_DISABLE_SANDBOX ELECTRON_DISABLE_GPU=$ELECTRON_DISABLE_GPU"
+log_debug "Exported Proton and Majestic environment" "Environment" "STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID SteamAppId=$SteamAppId SteamGameId=$SteamGameId WINEDLLOVERRIDES=$WINEDLLOVERRIDES WINEPREFIX=$WINEPREFIX MAJESTIC_PROTON_PLATFORM=$MAJESTIC_PROTON_PLATFORM MAJESTIC_GTA_WIN_PATH=$MAJESTIC_GTA_WIN_PATH MAJESTIC_DISABLE_CEF_GPU=$MAJESTIC_DISABLE_CEF_GPU ELECTRON_DISABLE_SANDBOX=$ELECTRON_DISABLE_SANDBOX ELECTRON_DISABLE_GPU=$ELECTRON_DISABLE_GPU"
 log_info "Changing working directory to Majestic Launcher directory" "Launcher" "directory=$MAJESTIC_DIR"
 cd "$MAJESTIC_DIR"
 log_info "Starting Majestic Launcher with Proton" "Launcher" "PROTON_VERB=$PROTON_VERB"
 log_debug "Majestic launch command" "Launcher" "command=$PROTON $PROTON_VERB $MAJESTIC_EXE $MAJESTIC_LAUNCHER_FLAGS platform=$MAJESTIC_PLATFORM gta_win_path=${GTA_WINE_DRIVE^^}:\\"
 log_success "Launcher preparation completed; handing control to Proton" "Launcher"
 
-exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE" $MAJESTIC_LAUNCHER_FLAGS
+exec env STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM_COMPAT_CLIENT_INSTALL_PATH" STEAM_COMPAT_DATA_PATH="$STEAM_COMPAT_DATA_PATH" STEAM_COMPAT_APP_ID="$STEAM_COMPAT_APP_ID" SteamAppId="$SteamAppId" SteamGameId="$SteamGameId" WINEPREFIX="$WINEPREFIX" WINEDLLOVERRIDES="$WINEDLLOVERRIDES" MAJESTIC_PROTON_PLATFORM="$MAJESTIC_PROTON_PLATFORM" MAJESTIC_GTA_WIN_PATH="$MAJESTIC_GTA_WIN_PATH" MAJESTIC_DISABLE_CEF_GPU="$MAJESTIC_DISABLE_CEF_GPU" ELECTRON_DISABLE_SANDBOX="$ELECTRON_DISABLE_SANDBOX" ELECTRON_DISABLE_GPU="$ELECTRON_DISABLE_GPU" "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE" $MAJESTIC_LAUNCHER_FLAGS
