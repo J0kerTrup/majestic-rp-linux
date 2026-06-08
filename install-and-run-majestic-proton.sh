@@ -287,6 +287,18 @@ validate_majestic_platform() {
   esac
 }
 
+validate_gta_wine_drive() {
+  GTA_WINE_DRIVE="${GTA_WINE_DRIVE,,}"
+  if [[ ! "$GTA_WINE_DRIVE" =~ ^[a-z]$ ]]; then
+    log_warn "Invalid GTA_WINE_DRIVE; using G: instead" "Wine" "configured=$GTA_WINE_DRIVE"
+    GTA_WINE_DRIVE="g"
+  fi
+  if [[ "$GTA_WINE_DRIVE" = "c" || "$GTA_WINE_DRIVE" = "z" ]]; then
+    log_warn "Reserved Wine drive selected for GTA; using G: instead" "Wine" "configured=${GTA_WINE_DRIVE^^}: reserved_drives=C:,Z:"
+    GTA_WINE_DRIVE="g"
+  fi
+}
+
 export_launch_environment() {
   export STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}"
   export STEAM_COMPAT_DATA_PATH="$COMPATDATA"
@@ -366,23 +378,54 @@ get_steam_library_roots() {
     log_debug "Steam library root skipped because base is empty or invalid" "Steam" "root=$base"
     return 0
   fi
-  log_debug "Adding Steam library root" "Steam" "root=$base"
-  printf '%s\n' "$base"
-  local vdf="$base/steamapps/libraryfolders.vdf"
-  if [[ ! -f "$vdf" ]]; then
-    log_debug "Steam libraryfolders.vdf not found" "Steam" "file=$vdf"
-    return 0
-  fi
-  log_debug "Reading Steam library folders" "Steam" "file=$vdf"
-  while IFS= read -r p; do
-    p="${p//\\\\//}"
-    if [[ -d "$p/steamapps" ]]; then
-      log_debug "Adding Steam library root from VDF" "Steam" "root=$p"
-      printf '%s\n' "$p"
+  local roots=()
+  local seen=()
+  add_steam_library_root() {
+    local root="$1"
+    local source="$2"
+    [[ -n "$root" ]] || return 0
+    root="${root%/}"
+    local key
+    key="$(realpath -m "$root")"
+    local existing
+    for existing in "${seen[@]}"; do
+      [[ "$existing" == "$key" ]] && return 0
+    done
+    seen+=("$key")
+    if [[ -d "$root/steamapps" ]]; then
+      log_debug "Adding Steam library root" "Steam" "root=$root source=$source"
+      roots+=("$root")
     else
-      log_debug "Ignoring invalid Steam library root from VDF" "Steam" "root=$p"
+      log_warn "Steam library root is configured but unavailable; mount the drive or fix Steam library path" "Steam" "root=$root source=$source"
     fi
-  done < <(sed -nE 's/^[[:space:]]*"path"[[:space:]]*"([^"]+)".*/\1/p' "$vdf")
+  }
+
+  add_steam_library_root "$base" "steam-root"
+  local vdf="$base/steamapps/libraryfolders.vdf"
+  if [[ -f "$vdf" ]]; then
+    log_debug "Reading Steam library folders" "Steam" "file=$vdf"
+    while IFS= read -r p; do
+      p="${p//\\\\//}"
+      add_steam_library_root "$p" "libraryfolders.vdf"
+    done < <(sed -nE 's/^[[:space:]]*"path"[[:space:]]*"([^"]+)".*/\1/p' "$vdf")
+  else
+    log_debug "Steam libraryfolders.vdf not found" "Steam" "file=$vdf"
+  fi
+
+  local extra login_name
+  login_name="${USER:-$(id -un 2>/dev/null || printf '')}"
+  shopt -s nullglob
+  for extra in /mnt/*/SteamLibrary /run/media/"$login_name"/*/SteamLibrary "$HOME"/Games/SteamLibrary; do
+    if [[ -d "$extra/steamapps" ]]; then
+      add_steam_library_root "$extra" "filesystem-scan"
+    fi
+  done
+  shopt -u nullglob
+
+  local root
+  for root in "${roots[@]}"; do
+    printf '%s\n' "$root"
+  done
 }
 
 find_compatdata() {
@@ -503,10 +546,15 @@ find_gta_manifest() {
 
 find_gta_path() {
   log_info "Checking GTA V installation" "GTA" "GTA_PATH=${GTA_PATH:-}"
-  if [[ -n "${GTA_PATH:-}" && -f "${GTA_PATH:-}/GTA5.exe" ]]; then
-    log_success "Using configured GTA V path" "GTA" "GTA_PATH=$GTA_PATH"
-    printf '%s\n' "$GTA_PATH"
-    return
+  if [[ -n "${GTA_PATH:-}" ]]; then
+    GTA_PATH="${GTA_PATH%/}"
+    if [[ -f "$GTA_PATH/GTA5.exe" && -f "$GTA_PATH/x64j.rpf" ]]; then
+      GTA_PATH="$(realpath -m "$GTA_PATH")"
+      log_success "Using configured GTA V path" "GTA" "GTA_PATH=$GTA_PATH"
+      printf '%s\n' "$GTA_PATH"
+      return
+    fi
+    log_warn "Configured GTA V path is not a valid GTA V Legacy directory; auto-detection will continue" "GTA" "GTA_PATH=$GTA_PATH required=GTA5.exe,x64j.rpf"
   fi
   local roots=()
   mapfile -t roots < <(get_steam_library_roots "$STEAM_ROOT")
@@ -1026,6 +1074,7 @@ log_debug "Resolved configuration values" "Environment" "GAME_WIDTH=$GAME_WIDTH 
 check_base_dependencies
 validate_proton_verb
 validate_majestic_platform
+validate_gta_wine_drive
 if [[ -n "$MAJESTIC_SOURCE_ROOT" ]]; then
   patch_recovered_source_tree
 else
