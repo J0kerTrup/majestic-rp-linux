@@ -370,9 +370,10 @@ function patchIndex(indexPath) {
     const helper = `/* ${directMarker}: adapt Majestic native patcher launch config under Proton. */
 const JO_PROTON_PERMISSIONS=${JSON.stringify(permissionValues)},JO_PROTON_GTA_PATH=process.env.MAJESTIC_GTA_WIN_PATH||"G:\\\\",JO_PROTON_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM||"rgl",JO_PROTON_DISABLE_CEF_GPU=process.env.MAJESTIC_DISABLE_CEF_GPU!=="0";
 function JO_isProtonRuntime(){return process.platform==="win32"&&!!(process.env.STEAM_COMPAT_DATA_PATH||process.env.STEAM_COMPAT_CLIENT_INSTALL_PATH||process.env.MAJESTIC_PROTON_PLATFORM||process.env.WINEPREFIX)}
+function JO_writeProtonSteamAppId(e){if(!e||e.startsWith("Z:\\\\"))return!1;try{return ue.writeFileSync(ae.join(e,"steam_appid.txt"),"271590","utf8"),P.log("[LINUX-PROTON DEBUG] wrote steam_appid.txt",{path:ae.join(e,"steam_appid.txt")}),!0}catch(e){return P.log("[LINUX-PROTON DEBUG] failed to write steam_appid.txt",{path:e}),!1}}
 function JO_patchJsonFile(e,t){if(!e||!ue.existsSync(e))return!1;try{const n=JSON.parse(ue.readFileSync(e,"utf8")),r=t(n);return r?(ue.writeFileSync(e,JSON.stringify(r,null,2)),!0):!1}catch(n){return P.log("[LINUX-PROTON DEBUG] failed to patch json",{filePath:e,error:n}),!1}}
 function JO_patchPermissionCache(e){const t=ae.join(e||"","cache");if(ue.existsSync(t)){const n=Buffer.from([...JO_PROTON_PERMISSIONS,255]);for(const r of ue.readdirSync(t)){const i=ae.join(t,r);ue.existsSync(i)&&ue.lstatSync(i).isDirectory()&&ue.writeFileSync(ae.join(i,"permissions"),n)}}}
-function JO_adaptLaunchConfigForProton(e){if(!JO_isProtonRuntime())return;let t="";const n=JO_patchJsonFile(e,r=>{let i=!1;return(String(r.gtaPath||"").startsWith("Z:\\\\")||String(r.gtaPath||"")!==JO_PROTON_GTA_PATH)&&(P.info("[LINUX-PROTON DEBUG] rewriting gtaPath for native patcher",{from:r.gtaPath,to:JO_PROTON_GTA_PATH}),r.gtaPath=JO_PROTON_GTA_PATH,i=!0),["steam","rgl","egs"].includes(JO_PROTON_PLATFORM)&&r.gtaPlatform!==JO_PROTON_PLATFORM&&(P.info("[LINUX-PROTON DEBUG] selecting Proton platform for native patcher",{from:r.gtaPlatform,to:JO_PROTON_PLATFORM}),r.gtaPlatform=JO_PROTON_PLATFORM,i=!0),r.debug!==!1&&(r.debug=!1,i=!0),JO_PROTON_DISABLE_CEF_GPU&&r.cefUseHardwareAcceleration!==!1&&(r.cefUseHardwareAcceleration=!1,i=!0),r.multiplayerPath&&r.configFileName&&(t=ae.join(r.multiplayerPath,r.configFileName),JO_patchPermissionCache(r.multiplayerPath)),i?r:null});n&&P.info("[LINUX-PROTON DEBUG] launch config adapted for Proton");t&&JO_patchJsonFile(t,r=>{let i=!1;return(String(r.gtapath||"").startsWith("Z:\\\\")||String(r.gtapath||"")!==JO_PROTON_GTA_PATH)&&(r.gtapath=JO_PROTON_GTA_PATH,i=!0),((String(r.gtaPath||"").startsWith("Z:\\\\")||String(r.gtaPath||"")!==JO_PROTON_GTA_PATH)&&(r.gtaPath=JO_PROTON_GTA_PATH,i=!0)),r.debug!==!1&&(r.debug=!1,i=!0),JO_PROTON_DISABLE_CEF_GPU&&r.cefUseHardwareAcceleration!==!1&&(r.cefUseHardwareAcceleration=!1,i=!0),i?r:null})}
+function JO_adaptLaunchConfigForProton(e){if(!JO_isProtonRuntime())return;let t="";const n=JO_patchJsonFile(e,r=>{let i=!1;return(String(r.gtaPath||"").startsWith("Z:\\\\")||String(r.gtaPath||"")!==JO_PROTON_GTA_PATH)&&(P.info("[LINUX-PROTON DEBUG] rewriting gtaPath for native patcher",{from:r.gtaPath,to:JO_PROTON_GTA_PATH}),r.gtaPath=JO_PROTON_GTA_PATH,i=!0),["steam","rgl","egs"].includes(JO_PROTON_PLATFORM)&&r.gtaPlatform!==JO_PROTON_PLATFORM&&(P.info("[LINUX-PROTON DEBUG] selecting Proton platform for native patcher",{from:r.gtaPlatform,to:JO_PROTON_PLATFORM}),r.gtaPlatform=JO_PROTON_PLATFORM,i=!0),r.debug!==!1&&(r.debug=!1,i=!0),JO_PROTON_DISABLE_CEF_GPU&&r.cefUseHardwareAcceleration!==!1&&(r.cefUseHardwareAcceleration=!1,i=!0),r.multiplayerPath&&r.configFileName&&(t=ae.join(r.multiplayerPath,r.configFileName),JO_patchPermissionCache(r.multiplayerPath),JO_writeProtonSteamAppId(r.multiplayerPath)),r.gtaPath&&JO_writeProtonSteamAppId(r.gtaPath),i?r:null});n&&P.info("[LINUX-PROTON DEBUG] launch config adapted for Proton");t&&JO_patchJsonFile(t,r=>{let i=!1;return(String(r.gtapath||"").startsWith("Z:\\\\")||String(r.gtapath||"")!==JO_PROTON_GTA_PATH)&&(r.gtapath=JO_PROTON_GTA_PATH,i=!0),((String(r.gtaPath||"").startsWith("Z:\\\\")||String(r.gtaPath||"")!==JO_PROTON_GTA_PATH)&&(r.gtaPath=JO_PROTON_GTA_PATH,i=!0)),r.debug!==!1&&(r.debug=!1,i=!0),JO_PROTON_DISABLE_CEF_GPU&&r.cefUseHardwareAcceleration!==!1&&(r.cefUseHardwareAcceleration=!1,i=!0),i?r:null})}
 function JO_patchMultiplayerWithProgress(e,t){return JO_adaptLaunchConfigForProton(e),Ic.patchMultiplayerWithProgress(e,t)}
 `;
     const anchor = "let Lc=!1,uf=!1;";
@@ -472,6 +473,19 @@ const protonPlatform = process.env.MAJESTIC_PROTON_PLATFORM || 'rgl';
 const disableCefGpu = process.env.MAJESTIC_DISABLE_CEF_GPU !== '0';
 const permissions = ${JSON.stringify(permissionValues)};
 
+function writeProtonSteamAppId(basePath) {
+  if (!basePath || basePath.startsWith('Z:\\\\')) return false;
+  try {
+    const appIdPath = path.join(basePath, 'steam_appid.txt');
+    fs.writeFileSync(appIdPath, '271590', 'utf8');
+    console.log('[LINUX-PROTON DEBUG] wrote steam_appid.txt', { path: appIdPath });
+    return true;
+  } catch (error) {
+    console.log('[LINUX-PROTON DEBUG] failed to write steam_appid.txt', { basePath, error });
+    return false;
+  }
+}
+
 function isProtonRuntime() {
   return process.platform === 'win32' && Boolean(
     process.env.STEAM_COMPAT_DATA_PATH ||
@@ -534,6 +548,10 @@ function adaptLaunchConfigForProton(launchOptionsPath) {
     if (config.multiplayerPath && config.configFileName) {
       multiplayerConfigPath = path.join(config.multiplayerPath, config.configFileName);
       patchPermissionCache(config.multiplayerPath);
+      writeProtonSteamAppId(config.multiplayerPath);
+    }
+    if (config.gtaPath) {
+      writeProtonSteamAppId(config.gtaPath);
     }
     return changed ? config : null;
   });
