@@ -31,7 +31,7 @@ class RunnerConfig:
     source_root: Path | None = None
     installer_url: str = "https://cdn.majestic-files.net/launcher/cis/MajesticLauncherSetup.exe"
     installer_path: Path | None = None
-    installer_args: str = "/S"
+    installer_args: str = ""
     installer_timeout: int = 30
     tricks_win10: bool = True
     tricks_timeout: int = 0
@@ -97,7 +97,7 @@ def load_config(config_path: Path | str = "majestic-runner.conf", *, dry_run: bo
         source_root=parse_path(values.get("MAJESTIC_SOURCE_ROOT")),
         installer_url=values.get("MAJESTIC_INSTALLER_URL", RunnerConfig.installer_url),
         installer_path=parse_path(values.get("MAJESTIC_INSTALLER_PATH")),
-        installer_args=values.get("MAJESTIC_INSTALLER_ARGS", "/S"),
+        installer_args=values.get("MAJESTIC_INSTALLER_ARGS", RunnerConfig.installer_args),
         installer_timeout=parse_int(values.get("MAJESTIC_INSTALLER_TIMEOUT"), 30),
         tricks_win10=parse_bool(values.get("PROTONTRICKS_WIN10"), True),
         tricks_timeout=parse_int(values.get("PROTONTRICKS_TIMEOUT"), 0),

@@ -4,6 +4,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..detection.paths import MAJESTIC_LOCAL_DIRS
+
 
 @dataclass(frozen=True, slots=True)
 class CleanupCandidate:
@@ -73,7 +75,7 @@ def find_majestic_cleanup_candidates(compatdata: Path, gta_path: Path | None = N
         start_menu = roaming / "Microsoft" / "Windows" / "Start Menu" / "Programs"
         paths.extend(
             [
-                (local / "MajesticLauncher", "Majestic Launcher install directory"),
+                *[(local / dirname, "Majestic Launcher install directory") for dirname in MAJESTIC_LOCAL_DIRS],
                 (local / "majestic-launcher-updater", "Majestic updater cache"),
                 (roaming / "majestic-launcher", "Majestic roaming cache and multiplayer data"),
                 (desktop / "Majestic Launcher.lnk", "Majestic desktop shortcut"),
@@ -86,15 +88,16 @@ def find_majestic_cleanup_candidates(compatdata: Path, gta_path: Path | None = N
     paths.extend((path, "Proton shortcut icon") for path in proton_shortcuts.glob("icons/*/apps/*Majestic*.png"))
     paths.append((drive_c / "MajesticLauncherSetup.exe", "Majestic installer cache"))
 
-    for launcher_dir in (drive_c / "users").glob("*/AppData/Local/MajesticLauncher"):
-        resources = launcher_dir / "resources"
-        paths.extend(
-            [
-                (resources / "app.asar.bak", "Majestic app.asar backup"),
-                (resources / "app.asar.majestic-proton-bak", "Legacy Majestic app.asar backup"),
-            ]
-        )
-        paths.extend((path, "Python patch backup") for path in launcher_dir.rglob("*.majestic-python-bak"))
+    for dirname in MAJESTIC_LOCAL_DIRS:
+        for launcher_dir in (drive_c / "users").glob(f"*/AppData/Local/{dirname}"):
+            resources = launcher_dir / "resources"
+            paths.extend(
+                [
+                    (resources / "app.asar.bak", "Majestic app.asar backup"),
+                    (resources / "app.asar.majestic-proton-bak", "Legacy Majestic app.asar backup"),
+                ]
+            )
+            paths.extend((path, "Python patch backup") for path in launcher_dir.rglob("*.majestic-python-bak"))
 
     return _existing(paths, gta_path)
 

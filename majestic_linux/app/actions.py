@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from ..core.errors import RunnerError
-from ..detection.paths import DetectionResult
+from ..detection.paths import DetectionResult, find_majestic_exes
 from ..discord.bridge import start_discord_bridge, stop_discord_bridge
 from ..patching.patcher import patch_js_tree
 from ..runtime.cleanup import delete_cleanup_candidates, find_majestic_cleanup_candidates
@@ -37,8 +37,11 @@ def cmd_patch(args: argparse.Namespace) -> int:
 def cmd_clean(args: argparse.Namespace) -> int:
     context, _logger = load_context(args)
     roots = [Path(".")]
+    if context.result.compatdata_path:
+        roots.extend(path.parent for path in find_majestic_exes(context.config, context.result.compatdata_path))
     if context.result.majestic_exe:
         roots.append(context.result.majestic_exe.parent)
+    roots = list(dict.fromkeys(roots))
     patterns = ("*.majestic-python-bak", "*.majestic-proton-bak", "*.majestic-proton-bak-*", "app.asar.bak")
     backups = sorted({path for root in roots for pattern in patterns for path in root.rglob(pattern)})
     if not backups:
@@ -94,7 +97,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             config, proton_path=result.proton_path, compatdata=result.compatdata_path, steam_root=result.steam_root, dry_run=config.dry_run, logger=logger
         )
     if result.majestic_exe is None:
-        raise RunnerError("Majestic Launcher.exe is still missing after installer step")
+        raise RunnerError("Majestic Launcher.exe is still missing after installer step in MajesticLauncher or MajesticLauncherGLOBAL")
     if result.selected_platform == "egs":
         ensure_egs_launcher_symlink(result.gta_path, dry_run=config.dry_run, logger=logger)
     config.runtime_library_paths = prepare_proton_runtime_fixups(result.proton_path, dry_run=config.dry_run, logger=logger)

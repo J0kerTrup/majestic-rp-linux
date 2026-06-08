@@ -34,7 +34,7 @@ MAJESTIC_XKB_OPTIONS=grp:alt_shift_toggle
 # Launcher installer, used when Majestic Launcher.exe is missing.
 MAJESTIC_INSTALLER_URL="https://cdn.majestic-files.net/launcher/cis/MajesticLauncherSetup.exe"
 MAJESTIC_INSTALLER_PATH=
-MAJESTIC_INSTALLER_ARGS="/S"
+MAJESTIC_INSTALLER_ARGS=
 MAJESTIC_INSTALLER_TIMEOUT=30
 
 # Steam -> protontricks, EGS/Heroic -> winetricks, RGL -> whichever exists.

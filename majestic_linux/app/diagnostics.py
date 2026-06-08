@@ -119,7 +119,10 @@ def _doctor_problems(config, result) -> list[str]:
         installer = installer_target(config, result.compatdata_path) if result.compatdata_path else config.installer_path or "-"
         print(f"Installer path:    {installer}")
         print(f"Installer URL:     {config.installer_url or '-'}")
-        problems.append("Majestic Launcher.exe was not found; run command can install it automatically, or set MAJESTIC_EXE.")
+        problems.append(
+            "Majestic Launcher.exe was not found in MajesticLauncher or MajesticLauncherGLOBAL; "
+            "run command can install it automatically, or set MAJESTIC_EXE."
+        )
     if result.selected_platform == "steam" and result.detected_platform != "steam":
         problems.append(f"Selected steam, but GTA files look like {result.detected_platform}. Check MAJESTIC_PLATFORM.")
     return problems

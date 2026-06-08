@@ -9,6 +9,39 @@ from ..core.config import RunnerConfig
 from .heroic import heroic_gta_candidates
 from .platform import detect_gta_platform, select_platform
 
+MAJESTIC_LOCAL_DIRS = ("MajesticLauncher", "MajesticLauncherGLOBAL")
+MAJESTIC_EXE_NAME = "Majestic Launcher.exe"
+
+
+def majestic_exe_candidates(compatdata: Path) -> list[Path]:
+    pfx = compatdata / "pfx"
+    candidates = [
+        pfx / "drive_c" / "Program Files" / "Majestic Launcher" / MAJESTIC_EXE_NAME,
+        pfx / "drive_c" / "Program Files (x86)" / "Majestic Launcher" / MAJESTIC_EXE_NAME,
+    ]
+    for dirname in MAJESTIC_LOCAL_DIRS:
+        candidates.append(pfx / "drive_c" / "users" / "steamuser" / "AppData" / "Local" / dirname / MAJESTIC_EXE_NAME)
+        candidates.extend(pfx.glob(f"drive_c/users/*/AppData/Local/{dirname}/{MAJESTIC_EXE_NAME}"))
+    candidates.extend(
+        [
+            pfx / "drive_c" / "users" / "steamuser" / "AppData" / "Local" / "Programs" / "Majestic Launcher" / MAJESTIC_EXE_NAME,
+            pfx / "drive_c" / "users" / "steamuser" / "AppData" / "Local" / "Programs" / "majestic-launcher" / MAJESTIC_EXE_NAME,
+        ]
+    )
+    candidates.extend(pfx.glob(f"drive_c/users/*/AppData/Local/Programs/Majestic Launcher/{MAJESTIC_EXE_NAME}"))
+    candidates.extend(pfx.glob(f"drive_c/users/*/AppData/Local/Programs/majestic-launcher/{MAJESTIC_EXE_NAME}"))
+    return list(dict.fromkeys(candidates))
+
+
+def find_majestic_exes(config: RunnerConfig, compatdata: Path | None) -> list[Path]:
+    found = []
+    if config.majestic_exe and config.majestic_exe.exists():
+        found.append(config.majestic_exe)
+    if not config.auto_detect or compatdata is None:
+        return found
+    found.extend(path for path in majestic_exe_candidates(compatdata) if path.exists())
+    return list(dict.fromkeys(found))
+
 
 @dataclass(slots=True)
 class DetectionResult:
@@ -116,24 +149,7 @@ def find_proton(config: RunnerConfig, steam_root: Path | None) -> Path | None:
 
 
 def find_majestic_exe(config: RunnerConfig, compatdata: Path | None) -> Path | None:
-    if config.majestic_exe and config.majestic_exe.exists():
-        return config.majestic_exe
-    if not config.auto_detect:
-        return None
-    if compatdata is None:
-        return None
-    pfx = compatdata / "pfx"
-    candidates = [
-        pfx / "drive_c" / "Program Files" / "Majestic Launcher" / "Majestic Launcher.exe",
-        pfx / "drive_c" / "Program Files (x86)" / "Majestic Launcher" / "Majestic Launcher.exe",
-        pfx / "drive_c" / "users" / "steamuser" / "AppData" / "Local" / "MajesticLauncher" / "Majestic Launcher.exe",
-        pfx / "drive_c" / "users" / "steamuser" / "AppData" / "Local" / "Programs" / "Majestic Launcher" / "Majestic Launcher.exe",
-        pfx / "drive_c" / "users" / "steamuser" / "AppData" / "Local" / "Programs" / "majestic-launcher" / "Majestic Launcher.exe",
-    ]
-    candidates.extend(pfx.glob("drive_c/users/*/AppData/Local/MajesticLauncher/Majestic Launcher.exe"))
-    candidates.extend(pfx.glob("drive_c/users/*/AppData/Local/Programs/Majestic Launcher/Majestic Launcher.exe"))
-    candidates.extend(pfx.glob("drive_c/users/*/AppData/Local/Programs/majestic-launcher/Majestic Launcher.exe"))
-    return next((path for path in candidates if path.exists()), None)
+    return next(iter(find_majestic_exes(config, compatdata)), None)
 
 
 def looks_like_gta(path: Path | None) -> bool:

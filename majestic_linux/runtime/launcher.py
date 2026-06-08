@@ -80,4 +80,13 @@ def install_majestic_launcher(
         raise RunnerError(f"Majestic installer timed out after {config.installer_timeout}s") from exc
     if result.returncode != 0:
         raise RunnerError(f"Majestic installer exited with code {result.returncode}")
-    return wait_for_majestic_exe(config, compatdata, timeout=config.installer_timeout, logger=logger)
+    installed = wait_for_majestic_exe(config, compatdata, timeout=config.installer_timeout, logger=logger)
+    if installed:
+        return installed
+    hint = "Clear MAJESTIC_INSTALLER_ARGS to run the installer interactively"
+    if not config.installer_args:
+        hint = "Complete the interactive installer, delete the cached installer if it is broken, or set MAJESTIC_EXE"
+    raise RunnerError(
+        "Majestic installer finished, but Majestic Launcher.exe was not found in the prefix. "
+        f"{hint}."
+    )
