@@ -4,12 +4,13 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/majestic-proton.conf}"
 PATCHER_FILE="$SCRIPT_DIR/majestic-proton-js-patcher.js"
-PATCHER_REQUIRED_MARKER="MAJESTIC_PROTON_INDEX_COMPAT_V4"
+PATCHER_REQUIRED_MARKER="MAJESTIC_PROTON_DIRECT_PATCH_V4"
 LOG_DIR="$SCRIPT_DIR/logs"
 LOG_FILE="$LOG_DIR/majestic-proton.log"
 LOG_MAX_BYTES=$((10 * 1024 * 1024))
 LOG_MAX_FILES=10
 LOG_MODULE="Launcher"
+GTA_STEAM_APP_ID="271590"
 
 init_logging() {
   mkdir -p "$LOG_DIR"
@@ -86,6 +87,7 @@ print_platform_banner() {
   local selected="$2"
   local detected="$3"
   local gta_path="$4"
+  local reason="${5:-unknown}"
   local platform_name
   platform_name="$(platform_title "$selected")"
   local border="============================================================"
@@ -95,6 +97,7 @@ print_platform_banner() {
     printf '%s\n' "$border"
     printf ' CONFIG VALUE : MAJESTIC_PLATFORM=%s\n' "$configured"
     printf ' DETECTED     : %s\n' "$(platform_title "$detected")"
+    printf ' REASON       : %s\n' "$reason"
     printf ' ENABLED      : %s\n' "$platform_name"
     printf ' GTA PATH     : %s\n' "$gta_path"
     printf ' WINE DRIVE   : %s:\\\n' "${GTA_WINE_DRIVE^^}"
@@ -175,6 +178,7 @@ APP_ID="${APP_ID:-}"
 MAJESTIC_INSTALLER_URL="${MAJESTIC_INSTALLER_URL:-https://cdn.majestic-files.net/launcher/cis/MajesticLauncherSetup.exe}"
 MAJESTIC_INSTALLER_PATH="${MAJESTIC_INSTALLER_PATH:-$SCRIPT_DIR/cache/MajesticLauncherSetup.exe}"
 MAJESTIC_INSTALLER_ARGS="${MAJESTIC_INSTALLER_ARGS:-/S}"
+MAJESTIC_SOURCE_ROOT="${MAJESTIC_SOURCE_ROOT:-}"
 
 require_command() {
   local name="$1"
@@ -302,6 +306,37 @@ get_steam_library_roots() {
 
 find_compatdata() {
   log_info "Checking Proton compatdata prefix" "Environment" "STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH:-} APP_ID=$APP_ID"
+  if [[ "${MAJESTIC_PLATFORM:-}" = "steam" ]]; then
+    local steam_app_id="$GTA_STEAM_APP_ID"
+    log_info "Steam flow requires GTA V Steam compatdata" "Steam" "required_app_id=$steam_app_id"
+
+    if [[ -n "${STEAM_COMPAT_DATA_PATH:-}" && -d "${STEAM_COMPAT_DATA_PATH:-}/pfx" ]]; then
+      if [[ "$(basename "$STEAM_COMPAT_DATA_PATH")" = "$steam_app_id" ]]; then
+        log_success "Using configured Steam GTA V compatdata prefix" "Steam" "COMPATDATA=$STEAM_COMPAT_DATA_PATH APP_ID=$steam_app_id"
+        printf '%s\n' "$STEAM_COMPAT_DATA_PATH"
+        return
+      fi
+      log_warn "Configured STEAM_COMPAT_DATA_PATH is not GTA V Steam compatdata; searching compatdata/271590 instead" "Steam" "configured=$STEAM_COMPAT_DATA_PATH required_app_id=$steam_app_id"
+    fi
+
+    if [[ -z "$STEAM_ROOT" ]]; then
+      die "Steam GTA V compatdata was not found because Steam root is unavailable. Set STEAM_ROOT and STEAM_COMPAT_DATA_PATH to GTA V compatdata/271590."
+    fi
+
+    local steam_root steam_candidate
+    while IFS= read -r steam_root; do
+      steam_candidate="$steam_root/steamapps/compatdata/$steam_app_id"
+      log_debug "Checking Steam GTA V compatdata candidate" "Steam" "candidate=$steam_candidate"
+      if [[ -d "$steam_candidate/pfx" ]]; then
+        log_success "Steam GTA V compatdata prefix found" "Steam" "COMPATDATA=$steam_candidate APP_ID=$steam_app_id"
+        printf '%s\n' "$steam_candidate"
+        return
+      fi
+    done < <(get_steam_library_roots "$STEAM_ROOT")
+
+    die "Steam GTA V compatdata/271590 was not found. Start GTA V once through Steam/Proton, or set STEAM_COMPAT_DATA_PATH to the existing steamapps/compatdata/271590 prefix."
+  fi
+
   if [[ -n "${STEAM_COMPAT_DATA_PATH:-}" && -d "${STEAM_COMPAT_DATA_PATH:-}/pfx" ]]; then
     if [[ -n "${MAJESTIC_EXE:-}" && -f "${MAJESTIC_EXE:-}" && "$MAJESTIC_EXE" == */pfx/* ]]; then
       local majestic_compat="${MAJESTIC_EXE%%/pfx/*}"
@@ -450,6 +485,23 @@ detect_gta_platform() {
   # RGL: GTAVLauncher.exe without steam_api64.dll = RGL
   if [[ -f "$gta/GTAVLauncher.exe" ]]; then printf 'rgl\n'; return; fi
   printf 'rgl\n'
+}
+
+detect_gta_platform_reason() {
+  local gta="$1"
+  if [[ -f "$gta/EOSSDK-Win64-Shipping.dll" ]]; then
+    printf 'EOSSDK-Win64-Shipping.dll found'
+    return
+  fi
+  if [[ -f "$gta/steam_api64.dll" ]]; then
+    printf 'steam_api64.dll found'
+    return
+  fi
+  if [[ -f "$gta/GTAVLauncher.exe" ]]; then
+    printf 'GTAVLauncher.exe found without Steam/Epic markers'
+    return
+  fi
+  printf 'no platform marker found; defaulting to rgl'
 }
 
 ensure_gta_launcher_for_egs() {
@@ -845,10 +897,32 @@ patch_asar_app() {
   log_success "Majestic Launcher JS patch completed" "Patcher" "app_asar=$app_asar"
 }
 
-log_debug "Resolved configuration values" "Environment" "GAME_WIDTH=$GAME_WIDTH GAME_HEIGHT=$GAME_HEIGHT GAME_WINDOWED=$GAME_WINDOWED GAME_BORDERLESS=$GAME_BORDERLESS DISABLE_CEF_GPU=$DISABLE_CEF_GPU MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM GTA_WINE_DRIVE=$GTA_WINE_DRIVE MAJESTIC_PERMISSIONS=$MAJESTIC_PERMISSIONS RESET_ROCKSTAR_DOCUMENTS=$RESET_ROCKSTAR_DOCUMENTS PROTON_VERB=$PROTON_VERB APP_ID=$APP_ID"
+patch_recovered_source_tree() {
+  if [[ ! -d "$MAJESTIC_SOURCE_ROOT" ]]; then
+    log_debug "Recovered source tree patch skipped because directory does not exist" "Patcher" "MAJESTIC_SOURCE_ROOT=$MAJESTIC_SOURCE_ROOT"
+    return 0
+  fi
+
+  [[ -f "$PATCHER_FILE" ]] || die "JS patcher was not found: $PATCHER_FILE"
+  grep -q "$PATCHER_REQUIRED_MARKER" "$PATCHER_FILE" || die "Outdated JS patcher: $PATCHER_FILE. Copy the updated majestic-proton-js-patcher.js next to this script."
+
+  log_info "Patching recovered Majestic source tree" "Patcher" "command=node $PATCHER_FILE $MAJESTIC_SOURCE_ROOT $MAJESTIC_PERMISSIONS"
+  if node "$PATCHER_FILE" "$MAJESTIC_SOURCE_ROOT" "$MAJESTIC_PERMISSIONS"; then
+    log_success "Recovered Majestic source tree patched" "Patcher" "MAJESTIC_SOURCE_ROOT=$MAJESTIC_SOURCE_ROOT"
+  else
+    log_warn "Recovered source tree patch failed; continuing with installed app.asar patch" "Patcher" "MAJESTIC_SOURCE_ROOT=$MAJESTIC_SOURCE_ROOT"
+  fi
+}
+
+log_debug "Resolved configuration values" "Environment" "GAME_WIDTH=$GAME_WIDTH GAME_HEIGHT=$GAME_HEIGHT GAME_WINDOWED=$GAME_WINDOWED GAME_BORDERLESS=$GAME_BORDERLESS DISABLE_CEF_GPU=$DISABLE_CEF_GPU MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM GTA_WINE_DRIVE=$GTA_WINE_DRIVE MAJESTIC_PERMISSIONS=$MAJESTIC_PERMISSIONS RESET_ROCKSTAR_DOCUMENTS=$RESET_ROCKSTAR_DOCUMENTS PROTON_VERB=$PROTON_VERB APP_ID=$APP_ID MAJESTIC_SOURCE_ROOT=$MAJESTIC_SOURCE_ROOT"
 check_base_dependencies
 validate_proton_verb
 validate_majestic_platform
+if [[ -n "$MAJESTIC_SOURCE_ROOT" ]]; then
+  patch_recovered_source_tree
+else
+  log_debug "Recovered source tree patch disabled" "Patcher" "MAJESTIC_SOURCE_ROOT is empty"
+fi
 
 STEAM_ROOT="$(find_steam_root)"
 GTA_PATH="$(find_gta_path)"
@@ -856,18 +930,19 @@ GTA_PATH="$(find_gta_path)"
 # Auto-detect real GTA V platform and warn if conf value differs
 CONFIGURED_MAJESTIC_PLATFORM="$MAJESTIC_PLATFORM"
 DETECTED_GTA_PLATFORM="$(detect_gta_platform "$GTA_PATH")"
-log_info "Detected GTA V platform from files" "GTA" "detected=$DETECTED_GTA_PLATFORM configured=$MAJESTIC_PLATFORM GTA_PATH=$GTA_PATH"
+DETECTED_GTA_PLATFORM_REASON="$(detect_gta_platform_reason "$GTA_PATH")"
+log_info "Detected GTA V platform from files" "GTA" "detected=$DETECTED_GTA_PLATFORM reason=$DETECTED_GTA_PLATFORM_REASON configured=$MAJESTIC_PLATFORM GTA_PATH=$GTA_PATH"
 if [[ "$MAJESTIC_PLATFORM" = "auto" ]]; then
   MAJESTIC_PLATFORM="$DETECTED_GTA_PLATFORM"
-  log_info "Auto-selected MAJESTIC_PLATFORM from GTA files" "GTA" "MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM"
-elif [[ "$MAJESTIC_PLATFORM_WAS_EXPLICIT" = "0" && "$MAJESTIC_PLATFORM" = "rgl" && "$DETECTED_GTA_PLATFORM" != "rgl" ]]; then
-  log_warn "Default MAJESTIC_PLATFORM=rgl but detected platform differs; applying detected platform" "GTA" "detected=$DETECTED_GTA_PLATFORM"
+  log_info "Auto-selected MAJESTIC_PLATFORM from GTA files" "GTA" "MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM reason=$DETECTED_GTA_PLATFORM_REASON"
+elif [[ "$MAJESTIC_PLATFORM" = "rgl" && "$MAJESTIC_PLATFORM_WAS_EXPLICIT" = "0" && "$DETECTED_GTA_PLATFORM" != "rgl" ]]; then
+  log_warn "MAJESTIC_PLATFORM=rgl but GTA files identify another platform; applying detected platform to avoid wrong license flow" "GTA" "detected=$DETECTED_GTA_PLATFORM reason=$DETECTED_GTA_PLATFORM_REASON explicit=$MAJESTIC_PLATFORM_WAS_EXPLICIT"
   MAJESTIC_PLATFORM="$DETECTED_GTA_PLATFORM"
-  log_info "Auto-corrected MAJESTIC_PLATFORM to '$MAJESTIC_PLATFORM'" "GTA"
+  log_info "Auto-corrected MAJESTIC_PLATFORM to '$MAJESTIC_PLATFORM'" "GTA" "reason=$DETECTED_GTA_PLATFORM_REASON"
 elif [[ "$MAJESTIC_PLATFORM" != "$DETECTED_GTA_PLATFORM" ]]; then
-  log_warn "Configured MAJESTIC_PLATFORM differs from detected GTA files; keeping explicit value" "GTA" "configured=$MAJESTIC_PLATFORM detected=$DETECTED_GTA_PLATFORM"
+  log_warn "Configured MAJESTIC_PLATFORM differs from detected GTA files; keeping explicit value" "GTA" "configured=$MAJESTIC_PLATFORM detected=$DETECTED_GTA_PLATFORM reason=$DETECTED_GTA_PLATFORM_REASON"
 fi
-print_platform_banner "$CONFIGURED_MAJESTIC_PLATFORM" "$MAJESTIC_PLATFORM" "$DETECTED_GTA_PLATFORM" "$GTA_PATH"
+print_platform_banner "$CONFIGURED_MAJESTIC_PLATFORM" "$MAJESTIC_PLATFORM" "$DETECTED_GTA_PLATFORM" "$GTA_PATH" "$DETECTED_GTA_PLATFORM_REASON"
 
 # For EGS: create GTAVLauncher.exe → GTA5.exe symlink so the launcher can invoke it via Wine
 if [[ "$MAJESTIC_PLATFORM" = "egs" ]]; then
@@ -878,6 +953,10 @@ GTA_MANIFEST="$(find_gta_manifest "$GTA_PATH" || true)"
 if [[ -z "$APP_ID" && -n "$GTA_MANIFEST" ]]; then
   APP_ID="$(manifest_value "$GTA_MANIFEST" appid)"
   log_debug "Read AppID from GTA manifest" "GTA" "manifest=$GTA_MANIFEST APP_ID=$APP_ID"
+fi
+if [[ "$MAJESTIC_PLATFORM" = "steam" && "$APP_ID" != "$GTA_STEAM_APP_ID" ]]; then
+  log_warn "Steam flow requires GTA V AppID 271590; overriding APP_ID" "Steam" "previous_APP_ID=${APP_ID:-} required_APP_ID=$GTA_STEAM_APP_ID manifest=${GTA_MANIFEST:-}"
+  APP_ID="$GTA_STEAM_APP_ID"
 fi
 if [[ -n "$APP_ID" ]]; then
   log_info "Detected GTA AppID" "GTA" "APP_ID=$APP_ID"
@@ -922,21 +1001,39 @@ reset_rockstar_documents
 patch_asar_app
 
 export STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}"
-export STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH:-$COMPATDATA}"
-export STEAM_COMPAT_APP_ID="${STEAM_COMPAT_APP_ID:-$APP_ID}"
-export SteamAppId="${SteamAppId:-$APP_ID}"
-export SteamGameId="${SteamGameId:-$APP_ID}"
+export STEAM_COMPAT_DATA_PATH="$COMPATDATA"
+export STEAM_COMPAT_APP_ID="$APP_ID"
+export SteamAppId="$APP_ID"
+export SteamGameId="$APP_ID"
+export STEAM_COMPAT_INSTALL_PATH="${STEAM_COMPAT_INSTALL_PATH:-$GTA_PATH}"
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-winegstreamer=d}"
 
 export MAJESTIC_PROTON_PLATFORM="$MAJESTIC_PLATFORM"
+if [[ -z "${MAJESTIC_PROTON_NATIVE_PLATFORM:-}" ]]; then
+  if [[ "$MAJESTIC_PLATFORM" = "steam" ]]; then
+    export MAJESTIC_PROTON_NATIVE_PLATFORM="rgl"
+  else
+    export MAJESTIC_PROTON_NATIVE_PLATFORM="$MAJESTIC_PLATFORM"
+  fi
+else
+  export MAJESTIC_PROTON_NATIVE_PLATFORM
+fi
 export MAJESTIC_GTA_WIN_PATH="${GTA_WINE_DRIVE^^}:\\"
 export MAJESTIC_DISABLE_CEF_GPU="$DISABLE_CEF_GPU"
 
-log_debug "Exported Proton and Majestic environment" "Environment" "STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID SteamAppId=$SteamAppId SteamGameId=$SteamGameId WINEDLLOVERRIDES=$WINEDLLOVERRIDES MAJESTIC_PROTON_PLATFORM=$MAJESTIC_PROTON_PLATFORM MAJESTIC_GTA_WIN_PATH=$MAJESTIC_GTA_WIN_PATH MAJESTIC_DISABLE_CEF_GPU=$MAJESTIC_DISABLE_CEF_GPU"
+log_debug "Exported Proton and Majestic environment" "Environment" "STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID STEAM_COMPAT_INSTALL_PATH=$STEAM_COMPAT_INSTALL_PATH SteamAppId=$SteamAppId SteamGameId=$SteamGameId WINEDLLOVERRIDES=$WINEDLLOVERRIDES MAJESTIC_PROTON_PLATFORM=$MAJESTIC_PROTON_PLATFORM MAJESTIC_PROTON_NATIVE_PLATFORM=$MAJESTIC_PROTON_NATIVE_PLATFORM MAJESTIC_GTA_WIN_PATH=$MAJESTIC_GTA_WIN_PATH MAJESTIC_DISABLE_CEF_GPU=$MAJESTIC_DISABLE_CEF_GPU"
+if [[ "$MAJESTIC_PLATFORM" = "steam" ]]; then
+  log_info "Steam flow selected" "Steam" "flow=steam APP_ID=$APP_ID STEAM_ROOT=$STEAM_ROOT PROTON=$PROTON COMPATDATA=$COMPATDATA GTA_PATH=$GTA_PATH launch_exe=$MAJESTIC_EXE"
+  if [[ "$(basename "$COMPATDATA")" != "$GTA_STEAM_APP_ID" ]]; then
+    log_warn "Steam flow is not using compatdata/271590; Steam license may not be visible" "Steam" "COMPATDATA=$COMPATDATA required_app_id=$GTA_STEAM_APP_ID"
+  fi
+else
+  log_info "Non-Steam flow selected" "Launcher" "flow=$MAJESTIC_PLATFORM APP_ID=$APP_ID PROTON=$PROTON COMPATDATA=$COMPATDATA GTA_PATH=$GTA_PATH launch_exe=$MAJESTIC_EXE"
+fi
 log_info "Changing working directory to Majestic Launcher directory" "Launcher" "directory=$MAJESTIC_DIR"
 cd "$MAJESTIC_DIR"
 log_info "Starting Majestic Launcher with Proton" "Launcher" "PROTON_VERB=$PROTON_VERB"
-log_debug "Majestic launch command" "Launcher" "command=$PROTON $PROTON_VERB $MAJESTIC_EXE platform=$MAJESTIC_PLATFORM gta_win_path=${GTA_WINE_DRIVE^^}:\\"
+log_debug "Majestic launch command" "Launcher" "flow=$MAJESTIC_PLATFORM command=$PROTON $PROTON_VERB $MAJESTIC_EXE platform=$MAJESTIC_PLATFORM gta_win_path=${GTA_WINE_DRIVE^^}:\\"
 log_success "Launcher preparation completed; handing control to Proton" "Launcher"
 
 exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE"

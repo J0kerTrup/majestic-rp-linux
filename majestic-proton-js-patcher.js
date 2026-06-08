@@ -84,8 +84,11 @@ if (!root) {
 }
 
 const marker = "MAJESTIC_PROTON_PATCH_V2";
-const indexCompatMarker = "MAJESTIC_PROTON_INDEX_COMPAT_V4";
-const directMarker = "MAJESTIC_PROTON_DIRECT_PATCH_V1";
+const indexCompatMarker = "MAJESTIC_PROTON_INDEX_COMPAT_V6";
+const directMarker = "MAJESTIC_PROTON_DIRECT_PATCH_V4";
+const directMarkerV3 = "MAJESTIC_PROTON_DIRECT_PATCH_V3";
+const directMarkerV2 = "MAJESTIC_PROTON_DIRECT_PATCH_V2";
+const directMarkerV1 = "MAJESTIC_PROTON_DIRECT_PATCH_V1";
 const sourceMarker = "MAJESTIC_PROTON_SOURCE_PATCH_V1";
 const asarBin = process.env.ASAR_BIN || "asar";
 
@@ -164,7 +167,9 @@ function resolveTargets(inputPath) {
   const siblingAppAsar = path.join(path.dirname(resolvedRoot), "app.asar");
   const extractedIndexPath = path.join(resolvedRoot, "dist", "electron", "main", "index.js");
   const sourceFindGtaPath = path.join(resolvedRoot, "src", "electron", "main", "utils", "findGTA.js");
+  const sourceRevalidateGtaPath = path.join(resolvedRoot, "src", "electron", "main", "utils", "revalidateGTA.js");
   const sourcePatcherPath = path.join(resolvedRoot, "src", "electron", "main", "patcher.js");
+  const sourceGamePath = path.join(resolvedRoot, "src", "electron", "main", "modules", "game.js");
 
   logInfo("Patcher", "Resolving patch targets", {
     inputPath,
@@ -173,10 +178,12 @@ function resolveTargets(inputPath) {
     siblingAppAsar,
     extractedIndexPath,
     sourceFindGtaPath,
+    sourceRevalidateGtaPath,
     sourcePatcherPath,
+    sourceGamePath,
   });
 
-  if (isFile(sourceFindGtaPath) && isFile(sourcePatcherPath)) {
+  if (isFile(sourceFindGtaPath) && isFile(sourceRevalidateGtaPath) && isFile(sourcePatcherPath) && isFile(sourceGamePath)) {
     const targets = {
       mode: "source",
       appRoot: resolvedRoot,
@@ -311,6 +318,9 @@ function ensureSourceImports(src) {
   if (!next.includes("import path from 'path';") && !next.includes('import path from "path";')) {
     next = "import path from 'path';\n" + next;
   }
+  if (!next.includes("import childProcess from 'child_process';") && !next.includes('import childProcess from "child_process";')) {
+    next = "import childProcess from 'child_process';\n" + next;
+  }
   return next;
 }
 
@@ -319,6 +329,14 @@ function patchSourceFindGta(filePath) {
   let src = read(filePath);
   if (src.includes(sourceMarker)) {
     logDebug("Patcher", "Source findGTA.js patch marker already present", { marker: sourceMarker });
+    return;
+  }
+  if (
+    src.includes("MAJESTIC_GTA_WIN_PATH") &&
+    src.includes("MAJESTIC_PROTON_PLATFORM") &&
+    (src.includes("getForcedProtonGTA") || src.includes("JO_ENV_GTA"))
+  ) {
+    logDebug("Patcher", "Source findGTA.js already contains Proton path/platform support");
     return;
   }
 
@@ -354,6 +372,14 @@ function patchSourcePatcher(filePath) {
   let src = read(filePath);
   if (src.includes(sourceMarker)) {
     logDebug("Patcher", "Source patcher.js patch marker already present", { marker: sourceMarker });
+    return;
+  }
+  if (
+    src.includes("PlayGTAV.exe") &&
+    src.includes("STEAM_GTA_APP_ID") &&
+    src.includes("SteamAppId")
+  ) {
+    logDebug("Patcher", "Source patcher.js already contains Steam fallback support");
     return;
   }
 
@@ -402,6 +428,11 @@ function JO_patchPermissionCache(multiplayerPath) {
             fs.writeFileSync(path.join(dir, 'permissions'), data);
         }
     }
+}
+
+async function JO_patchMultiplayerWithProgress(launchOptionsPath, onProgress) {
+    JO_adaptLaunchConfigForProton(launchOptionsPath);
+    return patcher.patchMultiplayerWithProgress(launchOptionsPath, onProgress);
 }
 
 function JO_adaptLaunchConfigForProton(launchOptionsPath) {
@@ -458,7 +489,6 @@ function JO_adaptLaunchConfigForProton(launchOptionsPath) {
         });
     }
 }
-
 `;
 
   const insertNeedle = "export const requestPatcherCancel = () => {";
@@ -471,9 +501,107 @@ function JO_adaptLaunchConfigForProton(launchOptionsPath) {
   logSuccess("Patcher", "Recovered source patcher.js patched", { filePath, permissionValues: sourcePermissionValues() });
 }
 
+function patchSourceRevalidateGta(filePath) {
+  logInfo("Patcher", "Patching recovered source revalidateGTA.js", { filePath });
+  let src = read(filePath);
+  const marker = "MAJESTIC_PROTON_SOURCE_REVALIDATE_PATCH_V1";
+  if (src.includes(marker)) {
+    logDebug("Patcher", "Source revalidateGTA.js patch marker already present", { marker });
+    return;
+  }
+  if (
+    src.includes("MAJESTIC_GTA_WIN_PATH") &&
+    src.includes("MAJESTIC_PROTON_PLATFORM") &&
+    (src.includes("forcedProtonPath") || src.includes("JO_FORCED_PROTON_PATH"))
+  ) {
+    logDebug("Patcher", "Source revalidateGTA.js already contains Proton revalidation support");
+    return;
+  }
+
+  const importNeedle = "import { game } from '../modules/game';";
+  if (!src.includes("const JO_normalizePlatform = (platform) => {")) {
+    if (!src.includes(importNeedle)) throw new Error("Could not find source revalidateGTA import anchor");
+    src = src.replace(
+      importNeedle,
+      `${importNeedle}
+
+const JO_normalizePlatform = (platform) => {
+    const normalized = platform?.toLowerCase();
+    if (normalized === 'epic') return 'egs';
+    return ['steam', 'rgl', 'egs'].includes(normalized) ? normalized : null;
+};`
+    );
+  }
+
+  const logNeedle = "log.info('[REVALIDATE GTA] Checking if GTA V is installed...', gtaPath);";
+  if (!src.includes("const JO_FORCED_PROTON_PATH = process.env.MAJESTIC_GTA_WIN_PATH;")) {
+    if (!src.includes(logNeedle)) throw new Error("Could not find source revalidateGTA env insertion anchor");
+    src = src.replace(
+      logNeedle,
+      `${logNeedle}
+
+    const JO_FORCED_PROTON_PATH = process.env.MAJESTIC_GTA_WIN_PATH;
+    const JO_FORCED_PROTON_PLATFORM = JO_normalizePlatform(process.env.MAJESTIC_PROTON_PLATFORM);
+    if (JO_FORCED_PROTON_PATH?.length && JO_FORCED_PROTON_PLATFORM && checkForValidGTAPath(JO_FORCED_PROTON_PATH)) {
+        gtaPath = JO_FORCED_PROTON_PATH.replace('GTA5.exe', '');
+        gtaPlatform = JO_FORCED_PROTON_PLATFORM;
+        await Promise.all([
+            game.set('path', gtaPath.replaceAll('/', '\\\\')),
+            game.set('platform', gtaPlatform),
+        ]);
+        log.info('[REVALIDATE GTA] using forced Proton GTA path and platform...', gtaPath, gtaPlatform);
+        return {
+            gta_path: gtaPath,
+            gta_platform: gtaPlatform,
+            valid: true,
+        };
+    }`
+    );
+  }
+
+  src = src.replace(
+    "const validPlatform = findValidGTAPlatform(detectedPath, detectedPlatform);",
+    "const validPlatform = findValidGTAPlatform(detectedPath, detectedPlatform) ?? JO_normalizePlatform(detectedPlatform);"
+  );
+  src = src.replace(
+    "gtaPlatform = findValidGTAPlatform(gtaPath);\n        game.set('platform', gtaPlatform);",
+    "gtaPlatform = findValidGTAPlatform(gtaPath, game.get('platform')) ?? JO_normalizePlatform(game.get('platform'));\n        if (gtaPlatform) await game.set('platform', gtaPlatform);"
+  );
+
+  src = `/* ${marker}: prefer Proton GTA path/platform and preserve Steam platform in recovered source tree. */\n` + src;
+  write(filePath, src);
+  logSuccess("Patcher", "Recovered source revalidateGTA.js patched", { filePath });
+}
+
+function patchSourceGame(filePath) {
+  logInfo("Patcher", "Patching recovered source game.js", { filePath });
+  let src = read(filePath);
+  const marker = "MAJESTIC_PROTON_SOURCE_GAME_PATCH_V1";
+  if (src.includes(marker)) {
+    logDebug("Patcher", "Source game.js patch marker already present", { marker });
+    return;
+  }
+  if (
+    src.includes("this.#platform = await regeditStore.get('gta_v_platform');") &&
+    src.includes("const launchConfigSaved = await saveLaunchConfig(launchConfig, tempPath);")
+  ) {
+    logDebug("Patcher", "Source game.js already contains platform init and awaited launch config save");
+    return;
+  }
+
+  src = src.replace("    async init() {\n        this.#platform;", "    async init() {\n        this.#platform = await regeditStore.get('gta_v_platform');");
+  src = src.replace("const launchConfigSaved = saveLaunchConfig(launchConfig, tempPath);", "const launchConfigSaved = await saveLaunchConfig(launchConfig, tempPath);");
+
+  src = `/* ${marker}: keep GTA platform in memory and await launch config writes. */\n` + src;
+  write(filePath, src);
+  logSuccess("Patcher", "Recovered source game.js patched", { filePath });
+}
+
 function patchSourceTree(appRoot) {
   patchSourceFindGta(path.join(appRoot, "src", "electron", "main", "utils", "findGTA.js"));
+  patchSourceRevalidateGta(path.join(appRoot, "src", "electron", "main", "utils", "revalidateGTA.js"));
   patchSourcePatcher(path.join(appRoot, "src", "electron", "main", "patcher.js"));
+  patchSourceGame(path.join(appRoot, "src", "electron", "main", "modules", "game.js"));
 }
 
 function patchIndex(indexPath) {
@@ -539,13 +667,33 @@ function patchIndex(indexPath) {
       logDebug("Patcher", "Applying Steam fallback compatibility patch", { needle: fallbackNeedle });
       src = src.replace(
         fallbackNeedle,
-        'JO_fallbackPlayGTAV=e=>new Promise(t=>{try{if(process.env.MAJESTIC_PROTON_PLATFORM!=="steam")return P.info(JO_DBG,"fallback PlayGTAV disabled for non-Steam platform",{platform:process.env.MAJESTIC_PROTON_PLATFORM}),t(!1);const n=e,r=oe.join(n,"PlayGTAV.exe"),i={...process.env,SteamAppId:process.env.SteamAppId||"271590",SteamGameId:process.env.SteamGameId||"271590"};'
+        'JO_fallbackPlayGTAV=e=>new Promise(t=>{try{return P.warn(JO_DBG,"Steam PlayGTAV fallback disabled to avoid launching vanilla GTA",{platform:process.env.MAJESTIC_PROTON_PLATFORM}),t(!1);const n=e,r=oe.join(n,"PlayGTAV.exe"),i={...process.env,SteamAppId:"271590",SteamGameId:"271590",STEAM_COMPAT_APP_ID:"271590"};'
+      );
+      compatPatched = true;
+    }
+
+    const fallbackNeedleV4 = 'JO_fallbackPlayGTAV=e=>new Promise(t=>{try{if(process.env.MAJESTIC_PROTON_PLATFORM!=="steam")return P.info(JO_DBG,"fallback PlayGTAV disabled for non-Steam platform",{platform:process.env.MAJESTIC_PROTON_PLATFORM}),t(!1);const n=e,r=oe.join(n,"PlayGTAV.exe"),i={...process.env,SteamAppId:process.env.SteamAppId||"271590",SteamGameId:process.env.SteamGameId||"271590"};';
+    if (src.includes(fallbackNeedleV4)) {
+      logDebug("Patcher", "Refreshing V4 Steam fallback patch with explicit Steam AppID env", { needle: fallbackNeedleV4 });
+      src = src.replace(
+        fallbackNeedleV4,
+        'JO_fallbackPlayGTAV=e=>new Promise(t=>{try{return P.warn(JO_DBG,"Steam PlayGTAV fallback disabled to avoid launching vanilla GTA",{platform:process.env.MAJESTIC_PROTON_PLATFORM}),t(!1);const n=e,r=oe.join(n,"PlayGTAV.exe"),i={...process.env,SteamAppId:"271590",SteamGameId:"271590",STEAM_COMPAT_APP_ID:"271590"};'
+      );
+      compatPatched = true;
+    }
+
+    const fallbackNeedleV5 = 'JO_fallbackPlayGTAV=e=>new Promise(t=>{try{if(process.env.MAJESTIC_PROTON_PLATFORM!=="steam")return P.info(JO_DBG,"fallback PlayGTAV disabled for non-Steam platform",{platform:process.env.MAJESTIC_PROTON_PLATFORM}),t(!1);const n=e,r=oe.join(n,"PlayGTAV.exe"),i={...process.env,SteamAppId:"271590",SteamGameId:"271590",STEAM_COMPAT_APP_ID:"271590"};';
+    if (src.includes(fallbackNeedleV5)) {
+      logDebug("Patcher", "Disabling V5 Steam PlayGTAV fallback", { needle: fallbackNeedleV5 });
+      src = src.replace(
+        fallbackNeedleV5,
+        'JO_fallbackPlayGTAV=e=>new Promise(t=>{try{return P.warn(JO_DBG,"Steam PlayGTAV fallback disabled to avoid launching vanilla GTA",{platform:process.env.MAJESTIC_PROTON_PLATFORM}),t(!1);const n=e,r=oe.join(n,"PlayGTAV.exe"),i={...process.env,SteamAppId:"271590",SteamGameId:"271590",STEAM_COMPAT_APP_ID:"271590"};'
       );
       compatPatched = true;
     }
 
     if (compatPatched) {
-      src = `/* ${indexCompatMarker}: force configured Rockstar/Epic platform and disable Steam fallback. */\n` + src;
+      src = `/* ${indexCompatMarker}: force configured GTA platform and disable PlayGTAV fallback. */\n` + src;
       write(indexPath, src);
       src = read(indexPath);
       logSuccess("Patcher", "index.js compatibility patches applied", { indexPath });
@@ -554,6 +702,54 @@ function patchIndex(indexPath) {
     }
   } else {
     logDebug("Patcher", "index.js compatibility marker already present", { marker: indexCompatMarker });
+  }
+
+  const directV4Replacement = 'async function JO_patchMultiplayerWithProgress(e,t){JO_adaptLaunchConfigForProton(e);return Ic.patchMultiplayerWithProgress(e,t)}';
+  const directV1Needle = 'function JO_patchMultiplayerWithProgress(e,t){return JO_adaptLaunchConfigForProton(e),Ic.patchMultiplayerWithProgress(e,t)}';
+  const directV2Needle = 'function JO_launchSteamPlayGTAVFallback(e){return new Promise(t=>{if(JO_PROTON_PLATFORM!=="steam")return t(!1);const n=ae.join(JO_PROTON_GTA_PATH,"PlayGTAV.exe"),r={...process.env,SteamAppId:"271590",SteamGameId:"271590",STEAM_COMPAT_APP_ID:"271590"};if(P.info("[LINUX-PROTON DEBUG] Steam fallback launching PlayGTAV.exe",{reason:e,exePath:n,SteamAppId:r.SteamAppId,SteamGameId:r.SteamGameId,STEAM_COMPAT_APP_ID:r.STEAM_COMPAT_APP_ID,STEAM_COMPAT_DATA_PATH:r.STEAM_COMPAT_DATA_PATH,STEAM_COMPAT_CLIENT_INSTALL_PATH:r.STEAM_COMPAT_CLIENT_INSTALL_PATH}),!ue.existsSync(n))return P.warn("[LINUX-PROTON DEBUG] Steam fallback PlayGTAV.exe missing",{exePath:n}),t(!1);const i=vn.spawn(n,[],{env:r,detached:!0,stdio:"ignore",cwd:JO_PROTON_GTA_PATH});i.once("error",a=>{P.error("[LINUX-PROTON DEBUG] Steam fallback failed to start PlayGTAV.exe",{exePath:n,error:a}),t(!1)}),i.unref(),t(!0)})}\nasync function JO_patchMultiplayerWithProgress(e,t){JO_adaptLaunchConfigForProton(e);try{const n=await Ic.patchMultiplayerWithProgress(e,t);return n?.success||JO_PROTON_PLATFORM!=="steam"?n:(P.warn("[LINUX-PROTON DEBUG] native patcher did not report success; trying Steam PlayGTAV fallback",{result:n}),await JO_launchSteamPlayGTAVFallback("native-result-not-success")?{success:!0,fallback:"PlayGTAV.exe"}:n)}catch(n){if(JO_PROTON_PLATFORM==="steam"&&await JO_launchSteamPlayGTAVFallback("native-patcher-exception"))return{success:!0,fallback:"PlayGTAV.exe"};throw n}}';
+  if (!src.includes(directMarker) && src.includes(directMarkerV2) && src.includes(directV2Needle)) {
+    logInfo("Patcher", "Upgrading direct native patcher hook from V2 to V4", { from: directMarkerV2, to: directMarker });
+    src = src.replace(directV2Needle, directV4Replacement);
+    src = `/* ${directMarker}: native patcher uses Proton-compatible platform; Steam fallback disabled. */\n` + src;
+    write(indexPath, src);
+    src = read(indexPath);
+    logSuccess("Patcher", "Direct native patcher hook upgraded to V4", { indexPath });
+  } else if (!src.includes(directMarker) && src.includes(directMarkerV1) && src.includes(directV1Needle)) {
+    logInfo("Patcher", "Upgrading direct native patcher hook from V1 to V4", { from: directMarkerV1, to: directMarker });
+    src = src.replace(directV1Needle, directV4Replacement);
+    src = `/* ${directMarker}: native patcher uses Proton-compatible platform; Steam fallback disabled. */\n` + src;
+    write(indexPath, src);
+    src = read(indexPath);
+    logSuccess("Patcher", "Direct native patcher hook upgraded to V4", { indexPath });
+  } else if (!src.includes(directMarker) && !src.includes(directMarkerV3) && (src.includes(directMarkerV1) || src.includes(directMarkerV2))) {
+    logWarn("Patcher", "Legacy direct marker is present but known hook body was not found", {
+      hasV1: src.includes(directMarkerV1),
+      hasV2: src.includes(directMarkerV2),
+    });
+  }
+
+  if (!src.includes(directMarker) && src.includes(directMarkerV3)) {
+    let upgraded = false;
+    const platformConstNeedle = 'JO_PROTON_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM||"rgl",JO_PROTON_DISABLE_CEF_GPU=process.env.MAJESTIC_DISABLE_CEF_GPU!=="0"';
+    const platformConstReplacement = 'JO_PROTON_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM||"rgl",JO_PROTON_NATIVE_PLATFORM=process.env.MAJESTIC_PROTON_NATIVE_PLATFORM||(JO_PROTON_PLATFORM==="steam"?"rgl":JO_PROTON_PLATFORM),JO_PROTON_DISABLE_CEF_GPU=process.env.MAJESTIC_DISABLE_CEF_GPU!=="0"';
+    if (src.includes(platformConstNeedle)) {
+      src = src.replace(platformConstNeedle, platformConstReplacement);
+      upgraded = true;
+    }
+
+    const platformUseNeedle = '["steam","rgl","egs"].includes(JO_PROTON_PLATFORM)&&r.gtaPlatform!==JO_PROTON_PLATFORM&&(P.info("[LINUX-PROTON DEBUG] selecting Proton platform for native patcher",{from:r.gtaPlatform,to:JO_PROTON_PLATFORM}),r.gtaPlatform=JO_PROTON_PLATFORM,i=!0)';
+    const platformUseReplacement = '["steam","rgl","egs"].includes(JO_PROTON_NATIVE_PLATFORM)&&r.gtaPlatform!==JO_PROTON_NATIVE_PLATFORM&&(P.info("[LINUX-PROTON DEBUG] selecting Proton native platform for native patcher",{from:r.gtaPlatform,to:JO_PROTON_NATIVE_PLATFORM,configured:JO_PROTON_PLATFORM}),r.gtaPlatform=JO_PROTON_NATIVE_PLATFORM,i=!0)';
+    if (src.includes(platformUseNeedle)) {
+      src = src.replace(platformUseNeedle, platformUseReplacement);
+      upgraded = true;
+    }
+
+    if (upgraded) {
+      src = `/* ${directMarker}: Steam Proton keeps AppID 271590 but native patcher uses rgl unless overridden. */\n` + src;
+      write(indexPath, src);
+      src = read(indexPath);
+      logSuccess("Patcher", "Direct native patcher platform mapping upgraded to V4", { indexPath });
+    }
   }
 
   if (src.includes(directMarker) || src.includes(marker)) {
@@ -572,12 +768,12 @@ function patchIndex(indexPath) {
       .map((x) => Number.parseInt(x.trim(), 10))
       .filter((x) => Number.isInteger(x) && x >= 0 && x <= 254);
     const helper = `/* ${directMarker}: adapt Majestic native patcher launch config under Proton. */
-const JO_PROTON_PERMISSIONS=${JSON.stringify(permissionValues)},JO_PROTON_GTA_PATH=process.env.MAJESTIC_GTA_WIN_PATH||"G:\\\\",JO_PROTON_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM||"rgl",JO_PROTON_DISABLE_CEF_GPU=process.env.MAJESTIC_DISABLE_CEF_GPU!=="0";
+const JO_PROTON_PERMISSIONS=${JSON.stringify(permissionValues)},JO_PROTON_GTA_PATH=process.env.MAJESTIC_GTA_WIN_PATH||"G:\\\\",JO_PROTON_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM||"rgl",JO_PROTON_NATIVE_PLATFORM=process.env.MAJESTIC_PROTON_NATIVE_PLATFORM||(JO_PROTON_PLATFORM==="steam"?"rgl":JO_PROTON_PLATFORM),JO_PROTON_DISABLE_CEF_GPU=process.env.MAJESTIC_DISABLE_CEF_GPU!=="0";
 function JO_isProtonRuntime(){return process.platform==="win32"&&!!(process.env.STEAM_COMPAT_DATA_PATH||process.env.STEAM_COMPAT_CLIENT_INSTALL_PATH||process.env.MAJESTIC_PROTON_PLATFORM||process.env.WINEPREFIX)}
 function JO_patchJsonFile(e,t){if(!e||!ue.existsSync(e))return!1;try{const n=JSON.parse(ue.readFileSync(e,"utf8")),r=t(n);return r?(ue.writeFileSync(e,JSON.stringify(r,null,2)),!0):!1}catch(n){return P.log("[LINUX-PROTON DEBUG] failed to patch json",{filePath:e,error:n}),!1}}
 function JO_patchPermissionCache(e){const t=ae.join(e||"","cache");if(ue.existsSync(t)){const n=Buffer.from([...JO_PROTON_PERMISSIONS,255]);for(const r of ue.readdirSync(t)){const i=ae.join(t,r);ue.existsSync(i)&&ue.lstatSync(i).isDirectory()&&ue.writeFileSync(ae.join(i,"permissions"),n)}}}
-function JO_adaptLaunchConfigForProton(e){if(!JO_isProtonRuntime())return;let t="";const n=JO_patchJsonFile(e,r=>{let i=!1;return(String(r.gtaPath||"").startsWith("Z:\\\\")||String(r.gtaPath||"")!==JO_PROTON_GTA_PATH)&&(P.info("[LINUX-PROTON DEBUG] rewriting gtaPath for native patcher",{from:r.gtaPath,to:JO_PROTON_GTA_PATH}),r.gtaPath=JO_PROTON_GTA_PATH,i=!0),["steam","rgl","egs"].includes(JO_PROTON_PLATFORM)&&r.gtaPlatform!==JO_PROTON_PLATFORM&&(P.info("[LINUX-PROTON DEBUG] selecting Proton platform for native patcher",{from:r.gtaPlatform,to:JO_PROTON_PLATFORM}),r.gtaPlatform=JO_PROTON_PLATFORM,i=!0),r.debug!==!1&&(r.debug=!1,i=!0),JO_PROTON_DISABLE_CEF_GPU&&r.cefUseHardwareAcceleration!==!1&&(r.cefUseHardwareAcceleration=!1,i=!0),r.multiplayerPath&&r.configFileName&&(t=ae.join(r.multiplayerPath,r.configFileName),JO_patchPermissionCache(r.multiplayerPath)),i?r:null});n&&P.info("[LINUX-PROTON DEBUG] launch config adapted for Proton");t&&JO_patchJsonFile(t,r=>{let i=!1;return(String(r.gtapath||"").startsWith("Z:\\\\")||String(r.gtapath||"")!==JO_PROTON_GTA_PATH)&&(r.gtapath=JO_PROTON_GTA_PATH,i=!0),((String(r.gtaPath||"").startsWith("Z:\\\\")||String(r.gtaPath||"")!==JO_PROTON_GTA_PATH)&&(r.gtaPath=JO_PROTON_GTA_PATH,i=!0)),r.debug!==!1&&(r.debug=!1,i=!0),JO_PROTON_DISABLE_CEF_GPU&&r.cefUseHardwareAcceleration!==!1&&(r.cefUseHardwareAcceleration=!1,i=!0),i?r:null})}
-function JO_patchMultiplayerWithProgress(e,t){return JO_adaptLaunchConfigForProton(e),Ic.patchMultiplayerWithProgress(e,t)}
+function JO_adaptLaunchConfigForProton(e){if(!JO_isProtonRuntime())return;let t="";const n=JO_patchJsonFile(e,r=>{let i=!1;return(String(r.gtaPath||"").startsWith("Z:\\\\")||String(r.gtaPath||"")!==JO_PROTON_GTA_PATH)&&(P.info("[LINUX-PROTON DEBUG] rewriting gtaPath for native patcher",{from:r.gtaPath,to:JO_PROTON_GTA_PATH}),r.gtaPath=JO_PROTON_GTA_PATH,i=!0),["steam","rgl","egs"].includes(JO_PROTON_NATIVE_PLATFORM)&&r.gtaPlatform!==JO_PROTON_NATIVE_PLATFORM&&(P.info("[LINUX-PROTON DEBUG] selecting Proton native platform for native patcher",{from:r.gtaPlatform,to:JO_PROTON_NATIVE_PLATFORM,configured:JO_PROTON_PLATFORM}),r.gtaPlatform=JO_PROTON_NATIVE_PLATFORM,i=!0),r.debug!==!1&&(r.debug=!1,i=!0),JO_PROTON_DISABLE_CEF_GPU&&r.cefUseHardwareAcceleration!==!1&&(r.cefUseHardwareAcceleration=!1,i=!0),r.multiplayerPath&&r.configFileName&&(t=ae.join(r.multiplayerPath,r.configFileName),JO_patchPermissionCache(r.multiplayerPath)),i?r:null});n&&P.info("[LINUX-PROTON DEBUG] launch config adapted for Proton");t&&JO_patchJsonFile(t,r=>{let i=!1;return(String(r.gtapath||"").startsWith("Z:\\\\")||String(r.gtapath||"")!==JO_PROTON_GTA_PATH)&&(r.gtapath=JO_PROTON_GTA_PATH,i=!0),((String(r.gtaPath||"").startsWith("Z:\\\\")||String(r.gtaPath||"")!==JO_PROTON_GTA_PATH)&&(r.gtaPath=JO_PROTON_GTA_PATH,i=!0)),r.debug!==!1&&(r.debug=!1,i=!0),JO_PROTON_DISABLE_CEF_GPU&&r.cefUseHardwareAcceleration!==!1&&(r.cefUseHardwareAcceleration=!1,i=!0),i?r:null})}
+async function JO_patchMultiplayerWithProgress(e,t){JO_adaptLaunchConfigForProton(e);return Ic.patchMultiplayerWithProgress(e,t)}
 `;
     const anchor = "let Lc=!1,uf=!1;";
     if (!src.includes(anchor)) {
