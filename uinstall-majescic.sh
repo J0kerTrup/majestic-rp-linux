@@ -250,3 +250,4 @@ if ((DRY_RUN)); then
 else
   info "Majestic uninstall cleanup completed."
 fi
+
