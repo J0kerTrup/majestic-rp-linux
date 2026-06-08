@@ -7,26 +7,59 @@ PATCHER_FILE="$SCRIPT_DIR/majestic-proton-js-patcher.js"
 PATCHER_REQUIRED_MARKER="MAJESTIC_PROTON_DIRECT_PATCH_V4"
 LOG_DIR="$SCRIPT_DIR/logs"
 LOG_FILE="$LOG_DIR/majestic-proton.log"
+STEP_LOG_FILE="$LOG_DIR/majestic-proton-steps.log"
 LOG_MAX_BYTES=$((10 * 1024 * 1024))
 LOG_MAX_FILES=10
 LOG_MODULE="Launcher"
 GTA_STEAM_APP_ID="271590"
+TRACE_FD=""
+
+rotate_log_file() {
+  local file="$1"
+  if [[ -f "$file" ]]; then
+    local size
+    size="$(wc -c < "$file" 2>/dev/null | tr -d ' \t' || printf '0')"
+    if (( size >= LOG_MAX_BYTES )); then
+      rm -f "$file.$((LOG_MAX_FILES - 1))"
+      local i
+      for ((i = LOG_MAX_FILES - 2; i >= 1; i--)); do
+        [[ -f "$file.$i" ]] && mv "$file.$i" "$file.$((i + 1))"
+      done
+      mv "$file" "$file.1"
+    fi
+  fi
+}
 
 init_logging() {
   mkdir -p "$LOG_DIR"
-  if [[ -f "$LOG_FILE" ]]; then
-    local size
-    size="$(wc -c < "$LOG_FILE" 2>/dev/null | tr -d ' \t' || printf '0')"
-    if (( size >= LOG_MAX_BYTES )); then
-      rm -f "$LOG_FILE.$((LOG_MAX_FILES - 1))"
-      local i
-      for ((i = LOG_MAX_FILES - 2; i >= 1; i--)); do
-        [[ -f "$LOG_FILE.$i" ]] && mv "$LOG_FILE.$i" "$LOG_FILE.$((i + 1))"
-      done
-      mv "$LOG_FILE" "$LOG_FILE.1"
-    fi
-  fi
-  touch "$LOG_FILE"
+  rotate_log_file "$LOG_FILE"
+  rotate_log_file "$STEP_LOG_FILE"
+  touch "$LOG_FILE" "$STEP_LOG_FILE"
+}
+
+start_step_trace() {
+  [[ "${MAJESTIC_TRACE_STEPS:-0}" = "1" ]] || return 0
+  [[ -z "${TRACE_FD:-}" ]] || return 0
+  rotate_log_file "$STEP_LOG_FILE"
+  exec {TRACE_FD}>>"$STEP_LOG_FILE"
+  export -n BASH_XTRACEFD 2>/dev/null || true
+  BASH_XTRACEFD="$TRACE_FD"
+  PS4='+[$(date "+%Y-%m-%d %H:%M:%S")] [TRACE] ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+  log_info "Detailed bash step tracing enabled" "Trace" "file=$STEP_LOG_FILE"
+  set -x
+}
+
+stop_step_trace() {
+  [[ -n "${TRACE_FD:-}" ]] || return 0
+  set +x
+  log_info "Detailed bash step tracing disabled" "Trace" "file=$STEP_LOG_FILE"
+  exec {TRACE_FD}>&-
+  TRACE_FD=""
+  unset BASH_XTRACEFD
+}
+
+log_step() {
+  log_info "$1" "Step" "${2:-}"
 }
 
 log_color() {
@@ -142,6 +175,15 @@ print_prefix_banner() {
 on_error() {
   local code=$?
   local command="${BASH_COMMAND:-unknown}"
+  if declare -F cleanup_discord_bridge >/dev/null 2>&1; then
+    cleanup_discord_bridge || true
+  fi
+  if declare -F restore_super_keys >/dev/null 2>&1; then
+    restore_super_keys || true
+  fi
+  if declare -F stop_step_trace >/dev/null 2>&1; then
+    stop_step_trace || true
+  fi
   log_error "Command failed" "$LOG_MODULE" "exit_code=$code line=${BASH_LINENO[0]:-unknown} command=$command"
   exit "$code"
 }
@@ -175,6 +217,14 @@ PROTONTRICKS_WIN10="${PROTONTRICKS_WIN10:-1}"
 PROTONTRICKS_TIMEOUT="${PROTONTRICKS_TIMEOUT:-0}"
 PROTONTRICKS_STOP_PREFIX="${PROTONTRICKS_STOP_PREFIX:-1}"
 MAJESTIC_LAUNCHER_FLAGS="${MAJESTIC_LAUNCHER_FLAGS:---no-sandbox --disable-dev-shm-usage --disable-gpu-sandbox}"
+MAJESTIC_WINE_DLL_OVERRIDES="${MAJESTIC_WINE_DLL_OVERRIDES:-winegstreamer=d;dcomp=d}"
+MAJESTIC_LOCALE="${MAJESTIC_LOCALE:-ru_RU.UTF-8}"
+MAJESTIC_INPUT_METHOD="${MAJESTIC_INPUT_METHOD:-xim}"
+MAJESTIC_XKB_LAYOUT="${MAJESTIC_XKB_LAYOUT:-}"
+MAJESTIC_XKB_OPTIONS="${MAJESTIC_XKB_OPTIONS:-}"
+MAJESTIC_DISABLE_SUPER_KEYS="${MAJESTIC_DISABLE_SUPER_KEYS:-1}"
+MAJESTIC_TRACE_STEPS="${MAJESTIC_TRACE_STEPS:-1}"
+XMODMAP_BACKUP_FILE=""
 
 
 PROTON_VERB="${PROTON_VERB:-waitforexitandrun}"
@@ -184,8 +234,12 @@ MAJESTIC_INSTALLER_PATH="${MAJESTIC_INSTALLER_PATH:-$SCRIPT_DIR/cache/MajesticLa
 MAJESTIC_INSTALLER_ARGS="${MAJESTIC_INSTALLER_ARGS:-/S}"
 MAJESTIC_INSTALLER_TIMEOUT="${MAJESTIC_INSTALLER_TIMEOUT:-30}"
 MAJESTIC_SOURCE_ROOT="${MAJESTIC_SOURCE_ROOT:-}"
-DISCORD_BRIDGE_URL="${DISCORD_BRIDGE_URL:-https://github.com/0e4ef622/wine-discord-ipc-bridge/releases/download/v0.0.3/winediscordipcbridge.exe}"
-DISCORD_BRIDGE_PATH="${DISCORD_BRIDGE_PATH:-$SCRIPT_DIR/cache/winediscordipcbridge.exe}"
+DISCORD_BRIDGE_PATH="${DISCORD_BRIDGE_PATH:-}"
+DISCORD_BRIDGE_URL="${DISCORD_BRIDGE_URL:-}"
+DISCORD_BRIDGE_START_DELAY="${DISCORD_BRIDGE_START_DELAY:-2}"
+DISCORD_BRIDGE_PID=""
+
+start_step_trace
 
 require_command() {
   local name="$1"
@@ -211,7 +265,7 @@ check_base_dependencies() {
 }
 
 check_installer_dependencies() {
-  log_info "Checking Majestic installer dependencies" "Dependencies"
+  log_info "Checking download dependencies" "Dependencies"
   if command -v curl >/dev/null 2>&1; then
     log_success "Download tool is available" "Dependencies" "tool=curl path=$(command -v curl)"
     return 0
@@ -221,6 +275,13 @@ check_installer_dependencies() {
     return 0
   fi
   die "Neither curl nor wget was found. Install curl or wget to download Majestic Launcher automatically."
+}
+
+is_url() {
+  case "$1" in
+    http://*|https://*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 force_prefix_windows_10() {
@@ -301,6 +362,101 @@ validate_gta_wine_drive() {
   fi
 }
 
+merge_wine_dll_overrides() {
+  local result="${WINEDLLOVERRIDES:-}"
+  local item dll
+  local -a override_items
+  IFS=';' read -ra override_items <<< "$MAJESTIC_WINE_DLL_OVERRIDES"
+  for item in "${override_items[@]}"; do
+    item="${item//[[:space:]]/}"
+    [[ -n "$item" ]] || continue
+    dll="${item%%=*}"
+    [[ -n "$dll" && "$item" == *=* ]] || continue
+    case ";$result;" in
+      *";$dll="*|*",$dll="*) ;;
+      *)
+        if [[ -n "$result" ]]; then
+          result="$result;$item"
+        else
+          result="$item"
+        fi
+        ;;
+    esac
+  done
+  printf '%s\n' "$result"
+}
+
+locale_is_available() {
+  local locale_name="$1"
+  [[ -n "$locale_name" ]] || return 1
+  command -v locale >/dev/null 2>&1 || return 0
+  local requested
+  requested="$(printf '%s\n' "$locale_name" | tr '[:upper:]' '[:lower:]' | sed 's/utf-8/utf8/g')"
+  locale -a 2>/dev/null | tr '[:upper:]' '[:lower:]' | sed 's/utf-8/utf8/g' | grep -qx "$requested"
+}
+
+export_keyboard_environment() {
+  if [[ -n "${MAJESTIC_LOCALE:-}" ]]; then
+    if locale_is_available "$MAJESTIC_LOCALE"; then
+      export LANG="$MAJESTIC_LOCALE"
+      export LC_ALL="$MAJESTIC_LOCALE"
+      export LC_CTYPE="$MAJESTIC_LOCALE"
+      log_success "Russian locale exported for Proton" "Input" "locale=$MAJESTIC_LOCALE"
+    else
+      log_warn "Configured locale is not generated on this system; Russian input may not work" "Input" "MAJESTIC_LOCALE=$MAJESTIC_LOCALE hint=locale -a"
+    fi
+  fi
+
+  if [[ -n "${MAJESTIC_INPUT_METHOD:-}" ]]; then
+    export XMODIFIERS="@im=$MAJESTIC_INPUT_METHOD"
+    export GTK_IM_MODULE="$MAJESTIC_INPUT_METHOD"
+    export QT_IM_MODULE="$MAJESTIC_INPUT_METHOD"
+    log_debug "Input method environment exported" "Input" "MAJESTIC_INPUT_METHOD=$MAJESTIC_INPUT_METHOD"
+  fi
+
+  if [[ -n "${MAJESTIC_XKB_LAYOUT:-}" ]]; then
+    export XKB_DEFAULT_LAYOUT="$MAJESTIC_XKB_LAYOUT"
+    [[ -n "${MAJESTIC_XKB_OPTIONS:-}" ]] && export XKB_DEFAULT_OPTIONS="$MAJESTIC_XKB_OPTIONS"
+    log_debug "XKB defaults exported for Proton/XWayland" "Input" "layout=$MAJESTIC_XKB_LAYOUT options=${MAJESTIC_XKB_OPTIONS:-}"
+  fi
+}
+
+disable_super_keys() {
+  [[ "${MAJESTIC_DISABLE_SUPER_KEYS:-0}" = "1" ]] || return 0
+  if [[ -z "${DISPLAY:-}" ]]; then
+    log_warn "Super/Win key disable skipped because DISPLAY is empty" "Input" "MAJESTIC_DISABLE_SUPER_KEYS=$MAJESTIC_DISABLE_SUPER_KEYS"
+    return 0
+  fi
+  if ! command -v xmodmap >/dev/null 2>&1; then
+    log_warn "Super/Win key disable skipped because xmodmap is not installed" "Input" "install=xorg-x11-server-utils or xorg-xmodmap"
+    return 0
+  fi
+
+  XMODMAP_BACKUP_FILE="$(mktemp "${TMPDIR:-/tmp}/majestic-xmodmap.XXXXXX")"
+  xmodmap -pke > "$XMODMAP_BACKUP_FILE"
+  log_info "Temporarily disabling Super/Win keys for launcher session" "Input" "backup=$XMODMAP_BACKUP_FILE"
+  xmodmap -e 'keycode 133 = NoSymbol NoSymbol NoSymbol NoSymbol' \
+          -e 'keycode 134 = NoSymbol NoSymbol NoSymbol NoSymbol' \
+          -e 'keycode 206 = NoSymbol NoSymbol NoSymbol NoSymbol' \
+          >/dev/null 2>&1 || {
+    log_warn "Failed to disable Super/Win keys through xmodmap" "Input"
+    rm -f "$XMODMAP_BACKUP_FILE"
+    XMODMAP_BACKUP_FILE=""
+    return 0
+  }
+  log_success "Super/Win keys disabled until launcher exits" "Input"
+}
+
+restore_super_keys() {
+  [[ -n "${XMODMAP_BACKUP_FILE:-}" && -f "$XMODMAP_BACKUP_FILE" ]] || return 0
+  if command -v xmodmap >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    log_info "Restoring Super/Win key mapping" "Input" "backup=$XMODMAP_BACKUP_FILE"
+    xmodmap "$XMODMAP_BACKUP_FILE" >/dev/null 2>&1 || log_warn "Failed to restore xmodmap backup automatically" "Input" "backup=$XMODMAP_BACKUP_FILE"
+  fi
+  rm -f "$XMODMAP_BACKUP_FILE"
+  XMODMAP_BACKUP_FILE=""
+}
+
 export_launch_environment() {
   export STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}"
   export STEAM_COMPAT_DATA_PATH="$COMPATDATA"
@@ -308,7 +464,8 @@ export_launch_environment() {
   export SteamAppId="$APP_ID"
   export SteamGameId="$APP_ID"
   export STEAM_COMPAT_INSTALL_PATH="${STEAM_COMPAT_INSTALL_PATH:-$GTA_PATH}"
-  export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-winegstreamer=d}"
+  WINEDLLOVERRIDES="$(merge_wine_dll_overrides)"
+  export WINEDLLOVERRIDES
 
   export MAJESTIC_PROTON_PLATFORM="$MAJESTIC_PLATFORM"
   if [[ -z "${MAJESTIC_PROTON_NATIVE_PLATFORM:-}" ]]; then
@@ -323,8 +480,9 @@ export_launch_environment() {
   export MAJESTIC_GTA_WIN_PATH="${GTA_WINE_DRIVE^^}:\\"
   export MAJESTIC_DISABLE_CEF_GPU="$DISABLE_CEF_GPU"
   export MAJESTIC_LAUNCHER_FLAGS
+  export_keyboard_environment
 
-  log_debug "Exported Proton and Majestic environment" "Environment" "STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID STEAM_COMPAT_INSTALL_PATH=$STEAM_COMPAT_INSTALL_PATH SteamAppId=$SteamAppId SteamGameId=$SteamGameId WINEDLLOVERRIDES=$WINEDLLOVERRIDES MAJESTIC_PROTON_PLATFORM=$MAJESTIC_PROTON_PLATFORM MAJESTIC_PROTON_NATIVE_PLATFORM=$MAJESTIC_PROTON_NATIVE_PLATFORM MAJESTIC_GTA_WIN_PATH=$MAJESTIC_GTA_WIN_PATH MAJESTIC_DISABLE_CEF_GPU=$MAJESTIC_DISABLE_CEF_GPU MAJESTIC_LAUNCHER_FLAGS=$MAJESTIC_LAUNCHER_FLAGS"
+  log_debug "Exported Proton and Majestic environment" "Environment" "STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID STEAM_COMPAT_INSTALL_PATH=$STEAM_COMPAT_INSTALL_PATH SteamAppId=$SteamAppId SteamGameId=$SteamGameId WINEDLLOVERRIDES=$WINEDLLOVERRIDES MAJESTIC_PROTON_PLATFORM=$MAJESTIC_PROTON_PLATFORM MAJESTIC_PROTON_NATIVE_PLATFORM=$MAJESTIC_PROTON_NATIVE_PLATFORM MAJESTIC_GTA_WIN_PATH=$MAJESTIC_GTA_WIN_PATH MAJESTIC_DISABLE_CEF_GPU=$MAJESTIC_DISABLE_CEF_GPU MAJESTIC_LAUNCHER_FLAGS=$MAJESTIC_LAUNCHER_FLAGS LANG=${LANG:-} LC_ALL=${LC_ALL:-} XMODIFIERS=${XMODIFIERS:-}"
 }
 
 backup_file() {
@@ -744,43 +902,6 @@ find_majestic_exe() {
   return 1
 }
 
-download_discord_bridge() {
-  log_info "Checking Discord RPC bridge" "Discord" "url=$DISCORD_BRIDGE_URL path=$DISCORD_BRIDGE_PATH"
-  if [[ -s "$DISCORD_BRIDGE_PATH" ]]; then
-    log_success "Using cached Discord RPC bridge" "Discord" "path=$DISCORD_BRIDGE_PATH"
-    return
-  fi
-
-  check_installer_dependencies
-  mkdir -p "$(dirname "$DISCORD_BRIDGE_PATH")"
-  if command -v curl >/dev/null 2>&1; then
-    log_info "Downloading Discord RPC bridge" "Discord" "command=curl -fL --retry 3 -o $DISCORD_BRIDGE_PATH $DISCORD_BRIDGE_URL"
-    curl -fL --retry 3 --connect-timeout 20 -o "$DISCORD_BRIDGE_PATH" "$DISCORD_BRIDGE_URL" || true
-  else
-    log_info "Downloading Discord RPC bridge" "Discord" "command=wget -O $DISCORD_BRIDGE_PATH $DISCORD_BRIDGE_URL"
-    wget -O "$DISCORD_BRIDGE_PATH" "$DISCORD_BRIDGE_URL" || true
-  fi
-  [[ -s "$DISCORD_BRIDGE_PATH" ]] || log_warn "Discord RPC bridge download failed" "Discord"
-}
-
-run_discord_bridge() {
-  echo "Starting rpcbridge"
-  if [[ -s "$DISCORD_BRIDGE_PATH" ]]; then
-    echo "Foun bridge path"
-    local prefix_bridge="$COMPATDATA/pfx/drive_c/winediscordipcbridge.exe"
-    cp -f "$DISCORD_BRIDGE_PATH" "$prefix_bridge"
-    log_info "Starting Discord RPC bridge through Proton" "Discord"
-    STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}" \
-    STEAM_COMPAT_DATA_PATH="$COMPATDATA" \
-    STEAM_COMPAT_APP_ID="${STEAM_COMPAT_APP_ID:-$APP_ID}" \
-    SteamAppId="${SteamAppId:-$APP_ID}" \
-    SteamGameId="${SteamGameId:-$APP_ID}" \
-    "$PROTON" run "C:\\winediscordipcbridge.exe" >/dev/null 2>&1 &
-    DISCORD_BRIDGE_PID=$!
-    log_success "Discord RPC bridge started in background" "Discord" "pid=$DISCORD_BRIDGE_PID"
-  fi
-}
-
 download_majestic_installer() {
   log_info "Checking Majestic Launcher installer" "Installer" "url=$MAJESTIC_INSTALLER_URL path=$MAJESTIC_INSTALLER_PATH"
   if [[ -s "$MAJESTIC_INSTALLER_PATH" ]]; then
@@ -821,7 +942,8 @@ run_proton_installer() {
     fi
   fi
   log_info "Running Majestic Launcher installer through Proton" "Installer" "PROTON=$PROTON COMPATDATA=$COMPATDATA installer=$prefix_installer args=${installer_args[*]:-} timeout=${MAJESTIC_INSTALLER_TIMEOUT}s"
-  local exit_code
+  local exit_code wine_dll_overrides
+  wine_dll_overrides="$(merge_wine_dll_overrides)"
   set +e
   trap - ERR
   STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}" \
@@ -829,6 +951,7 @@ run_proton_installer() {
   STEAM_COMPAT_APP_ID="${STEAM_COMPAT_APP_ID:-$APP_ID}" \
   SteamAppId="${SteamAppId:-$APP_ID}" \
   SteamGameId="${SteamGameId:-$APP_ID}" \
+  WINEDLLOVERRIDES="$wine_dll_overrides" \
   "${timeout_prefix[@]}" "${proton_command[@]}"
   exit_code=$?
   trap on_error ERR
@@ -879,6 +1002,138 @@ install_majestic_launcher() {
   fi
 
   die "Majestic Launcher installation completed but Majestic Launcher.exe was not found. Set MAJESTIC_EXE in $CONFIG_FILE."
+}
+
+download_discord_bridge() {
+  local url="$1"
+  local output="$2"
+  log_info "Downloading Discord RPC bridge" "Discord" "url=$url path=$output"
+  check_installer_dependencies
+  mkdir -p "$(dirname "$output")"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL --retry 3 --connect-timeout 20 -o "$output" "$url"
+  else
+    wget -O "$output" "$url"
+  fi
+  [[ -s "$output" ]] || die "Discord RPC bridge download failed: $output"
+  chmod +x "$output" 2>/dev/null || true
+  log_success "Discord RPC bridge downloaded" "Discord" "path=$output"
+}
+
+discord_bridge_cache_path_for_url() {
+  local url="$1"
+  local name="${url##*/}"
+  name="${name%%\?*}"
+  [[ -n "$name" ]] || name="discord-rpc-bridge.exe"
+  printf '%s\n' "$SCRIPT_DIR/cache/$name"
+}
+
+find_discord_bridge() {
+  local configured="${DISCORD_BRIDGE_PATH:-}"
+  local url="${DISCORD_BRIDGE_URL:-}"
+  local target
+
+  if [[ -n "$configured" ]] && is_url "$configured"; then
+    url="$configured"
+    target="$(discord_bridge_cache_path_for_url "$url")"
+    if [[ ! -s "$target" ]]; then
+      download_discord_bridge "$url" "$target"
+    fi
+    printf '%s\n' "$target"
+    return 0
+  fi
+
+  if [[ -n "$configured" ]]; then
+    if [[ -s "$configured" ]]; then
+      printf '%s\n' "$configured"
+      return 0
+    fi
+    if [[ -n "$url" ]]; then
+      download_discord_bridge "$url" "$configured"
+      printf '%s\n' "$configured"
+      return 0
+    fi
+    log_warn "Configured Discord RPC bridge was not found; Discord Rich Presence bridge skipped" "Discord" "DISCORD_BRIDGE_PATH=$configured"
+    return 1
+  fi
+
+  if [[ -n "$url" ]]; then
+    target="$(discord_bridge_cache_path_for_url "$url")"
+    if [[ ! -s "$target" ]]; then
+      download_discord_bridge "$url" "$target"
+    fi
+    printf '%s\n' "$target"
+    return 0
+  fi
+
+  local candidates=(
+    "$SCRIPT_DIR/winediscordipcbridge.exe"
+    "$SCRIPT_DIR/winediscordipcbridge.exe.so"
+    "$SCRIPT_DIR/bridge.exe"
+    "$SCRIPT_DIR/rpc-bridge.exe"
+    "$SCRIPT_DIR/cache/winediscordipcbridge.exe"
+    "$SCRIPT_DIR/cache/bridge.exe"
+    "$COMPATDATA/pfx/drive_c/winediscordipcbridge.exe"
+    "$COMPATDATA/pfx/drive_c/bridge.exe"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    [[ -s "$candidate" ]] && {
+      printf '%s\n' "$candidate"
+      return 0
+    }
+  done
+
+  log_debug "Discord RPC bridge is not configured and no local bridge was found" "Discord"
+  return 1
+}
+
+warn_if_discord_ipc_missing() {
+  local runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  shopt -s nullglob
+  local sockets=("$runtime_dir"/discord-ipc-* "$runtime_dir"/app/com.discordapp.Discord/discord-ipc-*)
+  shopt -u nullglob
+  if (( ${#sockets[@]} == 0 )); then
+    log_warn "Discord IPC socket was not found; Rich Presence may stay disabled until native Discord/Vesktop is running" "Discord" "runtime_dir=$runtime_dir"
+  else
+    log_success "Discord IPC socket detected" "Discord" "socket=${sockets[0]}"
+  fi
+}
+
+start_discord_bridge() {
+  local bridge
+  bridge="$(find_discord_bridge)" || return 0
+
+  warn_if_discord_ipc_missing
+  log_info "Starting Discord RPC bridge" "Discord" "bridge=$bridge COMPATDATA=$COMPATDATA"
+  case "${bridge,,}" in
+    *.exe|*.bat|*.cmd)
+      "$PROTON" runinprefix "$bridge" >> "$LOG_FILE" 2>&1 &
+      ;;
+    *)
+      chmod +x "$bridge" 2>/dev/null || true
+      WINEPREFIX="$COMPATDATA/pfx" \
+      STEAM_COMPAT_DATA_PATH="$COMPATDATA" \
+      STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}" \
+      "$bridge" >> "$LOG_FILE" 2>&1 &
+      ;;
+  esac
+  DISCORD_BRIDGE_PID=$!
+  log_success "Discord RPC bridge started" "Discord" "pid=$DISCORD_BRIDGE_PID delay=${DISCORD_BRIDGE_START_DELAY}s"
+
+  if [[ "$DISCORD_BRIDGE_START_DELAY" =~ ^[0-9]+([.][0-9]+)?$ ]] && command -v sleep >/dev/null 2>&1; then
+    sleep "$DISCORD_BRIDGE_START_DELAY"
+  fi
+}
+
+cleanup_discord_bridge() {
+  [[ -n "${DISCORD_BRIDGE_PID:-}" ]] || return 0
+  if kill -0 "$DISCORD_BRIDGE_PID" >/dev/null 2>&1; then
+    log_info "Stopping Discord RPC bridge" "Discord" "pid=$DISCORD_BRIDGE_PID"
+    kill "$DISCORD_BRIDGE_PID" >/dev/null 2>&1 || true
+    wait "$DISCORD_BRIDGE_PID" >/dev/null 2>&1 || true
+  fi
+  DISCORD_BRIDGE_PID=""
 }
 
 patch_json_file() {
@@ -1109,7 +1364,7 @@ patch_recovered_source_tree() {
   fi
 }
 
-log_debug "Resolved configuration values" "Environment" "GAME_WIDTH=$GAME_WIDTH GAME_HEIGHT=$GAME_HEIGHT GAME_WINDOWED=$GAME_WINDOWED GAME_BORDERLESS=$GAME_BORDERLESS DISABLE_CEF_GPU=$DISABLE_CEF_GPU MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM GTA_WINE_DRIVE=$GTA_WINE_DRIVE MAJESTIC_PERMISSIONS=$MAJESTIC_PERMISSIONS RESET_ROCKSTAR_DOCUMENTS=$RESET_ROCKSTAR_DOCUMENTS PROTONTRICKS_WIN10=$PROTONTRICKS_WIN10 PROTONTRICKS_TIMEOUT=$PROTONTRICKS_TIMEOUT PROTON_VERB=$PROTON_VERB APP_ID=$APP_ID MAJESTIC_INSTALLER_TIMEOUT=$MAJESTIC_INSTALLER_TIMEOUT MAJESTIC_LAUNCHER_FLAGS=$MAJESTIC_LAUNCHER_FLAGS MAJESTIC_SOURCE_ROOT=$MAJESTIC_SOURCE_ROOT"
+log_debug "Resolved configuration values" "Environment" "GAME_WIDTH=$GAME_WIDTH GAME_HEIGHT=$GAME_HEIGHT GAME_WINDOWED=$GAME_WINDOWED GAME_BORDERLESS=$GAME_BORDERLESS DISABLE_CEF_GPU=$DISABLE_CEF_GPU MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM GTA_WINE_DRIVE=$GTA_WINE_DRIVE MAJESTIC_PERMISSIONS=$MAJESTIC_PERMISSIONS RESET_ROCKSTAR_DOCUMENTS=$RESET_ROCKSTAR_DOCUMENTS PROTONTRICKS_WIN10=$PROTONTRICKS_WIN10 PROTONTRICKS_TIMEOUT=$PROTONTRICKS_TIMEOUT PROTON_VERB=$PROTON_VERB APP_ID=$APP_ID MAJESTIC_INSTALLER_TIMEOUT=$MAJESTIC_INSTALLER_TIMEOUT MAJESTIC_LAUNCHER_FLAGS=$MAJESTIC_LAUNCHER_FLAGS MAJESTIC_WINE_DLL_OVERRIDES=$MAJESTIC_WINE_DLL_OVERRIDES MAJESTIC_LOCALE=$MAJESTIC_LOCALE MAJESTIC_INPUT_METHOD=$MAJESTIC_INPUT_METHOD MAJESTIC_XKB_LAYOUT=$MAJESTIC_XKB_LAYOUT MAJESTIC_XKB_OPTIONS=$MAJESTIC_XKB_OPTIONS MAJESTIC_DISABLE_SUPER_KEYS=$MAJESTIC_DISABLE_SUPER_KEYS MAJESTIC_TRACE_STEPS=$MAJESTIC_TRACE_STEPS DISCORD_BRIDGE_PATH=$DISCORD_BRIDGE_PATH DISCORD_BRIDGE_URL=$DISCORD_BRIDGE_URL DISCORD_BRIDGE_START_DELAY=$DISCORD_BRIDGE_START_DELAY MAJESTIC_SOURCE_ROOT=$MAJESTIC_SOURCE_ROOT"
 check_base_dependencies
 validate_proton_verb
 validate_majestic_platform
@@ -1189,8 +1444,8 @@ patch_settings_xml "$COMPATDATA/pfx/drive_c/users/steamuser/Documents/Rockstar G
 patch_runtime_configs
 reset_rockstar_documents
 patch_asar_app
-download_discord_bridge
-
+start_discord_bridge
+disable_super_keys
 if [[ "$MAJESTIC_PLATFORM" = "steam" ]]; then
   log_info "Steam flow selected" "Steam" "flow=steam APP_ID=$APP_ID STEAM_ROOT=$STEAM_ROOT PROTON=$PROTON COMPATDATA=$COMPATDATA GTA_PATH=$GTA_PATH launch_exe=$MAJESTIC_EXE"
   if [[ "$(basename "$COMPATDATA")" != "$GTA_STEAM_APP_ID" ]]; then
@@ -1210,11 +1465,18 @@ fi
 log_debug "Majestic launch command" "Launcher" "flow=$MAJESTIC_PLATFORM command=$PROTON $PROTON_VERB $MAJESTIC_EXE ${launcher_args[*]:-} platform=$MAJESTIC_PLATFORM gta_win_path=${GTA_WINE_DRIVE^^}:\\"
 log_success "Launcher preparation completed; handing control to Proton" "Launcher"
 
-run_discord_bridge
-
-exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE" "${launcher_args[@]}"
-
-if [[ -n "${DISCORD_BRIDGE_PID:-}" ]]; then
-  log_info "Stopping Discord RPC bridge" "Discord" "pid=$DISCORD_BRIDGE_PID"
-  kill "$DISCORD_BRIDGE_PID" 2>/dev/null || true
+if [[ -n "${DISCORD_BRIDGE_PID:-}" || -n "${XMODMAP_BACKUP_FILE:-}" || -n "${TRACE_FD:-}" ]]; then
+  set +e
+  trap - ERR
+  "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE" "${launcher_args[@]}"
+  launch_exit_code=$?
+  trap on_error ERR
+  set -e
+  cleanup_discord_bridge
+  restore_super_keys
+  stop_step_trace
+  exit "$launch_exit_code"
 fi
+
+stop_step_trace
+exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE" "${launcher_args[@]}"
