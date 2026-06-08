@@ -15,8 +15,9 @@ def success(self: logging.Logger, message: str, *args: object, **kwargs: object)
 logging.Logger.success = success  # type: ignore[attr-defined]
 
 
-def setup_logging(debug: bool = False, log_dir: Path | None = None) -> logging.Logger:
-    level = logging.DEBUG if debug else logging.INFO
+def setup_logging(debug: bool = False, log_dir: Path | None = None, level_name: str | None = None) -> logging.Logger:
+    configured = getattr(logging, (level_name or "INFO").upper(), logging.INFO)
+    level = logging.DEBUG if debug else configured
     root = logging.getLogger("majestic_linux")
     root.handlers.clear()
     root.setLevel(level)

@@ -1,5 +1,4 @@
-# Majestic Runner config example.
-# Copy to majestic-runner.conf or run: python3 -m majestic_linux config
+DEFAULT_CONFIG_TEXT = """# Majestic Runner config.
 # Environment variables override values from this file.
 
 # GTA V startup resolution and window mode.
@@ -77,3 +76,4 @@ analyze_codecs=true
 analyze_network_streams=true
 analyze_proton=true
 analyze_wine=true
+"""

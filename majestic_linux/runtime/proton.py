@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.config import RunnerConfig
-from ..core.errors import CommandError
+from .fixups import apply_library_path
+from .input import input_env
+from .lifecycle import run_with_lifecycle
 from .wine import WineMapping
 
 
@@ -29,6 +31,7 @@ def build_proton_command(
 ) -> ProtonCommand:
     app_id = "271590" if platform == "steam" else (config.app_id if config.app_id != "271590" else "0")
     env = os.environ.copy()
+    env.update(input_env(config))
     env.update(
         {
             "STEAM_COMPAT_DATA_PATH": str(compatdata),
@@ -38,6 +41,8 @@ def build_proton_command(
             "SteamGameId": app_id,
             "MAJESTIC_PLATFORM": platform,
             "MAJESTIC_PROTON_PLATFORM": config.native_platform or platform,
+            "MAJESTIC_DISABLE_CEF_GPU": "1" if config.disable_cef_gpu else "0",
+            "MAJESTIC_LAUNCHER_FLAGS": config.launcher_flags,
             "GTA_PATH": str(wine_mapping.gta_path),
             "MAJESTIC_GTA_WIN_PATH": wine_mapping.wine_gta_path,
             "DISABLE_CEF_GPU": "1" if config.disable_cef_gpu else "0",
@@ -47,18 +52,28 @@ def build_proton_command(
             "GAME_BORDERLESS": "1" if config.game_borderless else "0",
         }
     )
-    argv = [str(proton_path), "waitforexitandrun", str(majestic_exe)]
+    if config.disable_cef_gpu:
+        env.setdefault("CEF_DISABLE_GPU", "1")
+    if config.radio_disable_winegstreamer:
+        env["WINEDLLOVERRIDES"] = _with_dll_override(env.get("WINEDLLOVERRIDES", ""), "winegstreamer=d")
+    apply_library_path(env, getattr(config, "runtime_library_paths", []))
+    argv = [str(proton_path), "waitforexitandrun", str(majestic_exe), *shlex.split(config.launcher_flags)]
     return ProtonCommand(argv, env, majestic_exe.parent)
 
 
 def run_proton(command: ProtonCommand, *, dry_run: bool = False, logger: logging.Logger | None = None) -> int:
-    if logger:
-        logger.info("Launching Proton: %s", " ".join(command.argv))
-    if dry_run:
-        if logger:
-            logger.success("Dry-run: Proton launch skipped")  # type: ignore[attr-defined]
-        return 0
-    result = subprocess.run(command.argv, env=command.env, cwd=command.cwd, check=False)
-    if result.returncode != 0:
-        raise CommandError(f"Proton exited with code {result.returncode}")
-    return result.returncode
+    compatdata_raw = command.env.get("STEAM_COMPAT_DATA_PATH")
+    if not compatdata_raw:
+        raise ValueError("STEAM_COMPAT_DATA_PATH is required for lifecycle-managed Proton launch")
+    config = RunnerConfig(config_path=Path("majestic-runner.conf"))
+    return run_with_lifecycle(command, config, Path(compatdata_raw), dry_run=dry_run, logger=logger)
+
+
+def run_proton_managed(command: ProtonCommand, config: RunnerConfig, compatdata: Path, *, dry_run: bool = False, logger: logging.Logger | None = None) -> int:
+    return run_with_lifecycle(command, config, compatdata, dry_run=dry_run, logger=logger)
+
+
+def _with_dll_override(current: str, override: str) -> str:
+    name = override.split("=", 1)[0].lower()
+    parts = [part for part in current.split(";") if part and not part.lower().startswith(name + "=")]
+    return ";".join([override, *parts])

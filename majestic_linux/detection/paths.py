@@ -22,6 +22,8 @@ class DetectionResult:
 
 
 def find_steam_root(config: RunnerConfig) -> Path | None:
+    if config.steam_root is None and not config.auto_detect:
+        return None
     candidates = [
         config.steam_root,
         Path.home() / ".steam" / "steam",
@@ -49,6 +51,8 @@ def _steam_libraries(steam_root: Path | None) -> list[Path]:
 def find_compatdata(config: RunnerConfig, steam_root: Path | None) -> Path | None:
     if config.compatdata_path and config.compatdata_path.exists():
         return config.compatdata_path
+    if not config.auto_detect:
+        return None
     for library in _steam_libraries(steam_root):
         path = library / "steamapps" / "compatdata" / "271590"
         if path.exists():
@@ -69,6 +73,8 @@ def _manifest_install_dir(manifest: Path) -> str | None:
 def find_gta_path(config: RunnerConfig, steam_root: Path | None) -> Path | None:
     if config.gta_path and config.gta_path.exists():
         return config.gta_path
+    if not config.auto_detect:
+        return None
     for library in _steam_libraries(steam_root):
         manifest = library / "steamapps" / "appmanifest_271590.acf"
         install_dir = _manifest_install_dir(manifest) if manifest.exists() else None
@@ -93,6 +99,8 @@ def find_gta_path(config: RunnerConfig, steam_root: Path | None) -> Path | None:
 def find_proton(config: RunnerConfig, steam_root: Path | None) -> Path | None:
     if config.proton_path and config.proton_path.exists():
         return config.proton_path
+    if not config.auto_detect:
+        return None
     candidates: list[Path] = []
     for library in _steam_libraries(steam_root):
         common = library / "steamapps" / "common"
@@ -110,6 +118,8 @@ def find_proton(config: RunnerConfig, steam_root: Path | None) -> Path | None:
 def find_majestic_exe(config: RunnerConfig, compatdata: Path | None) -> Path | None:
     if config.majestic_exe and config.majestic_exe.exists():
         return config.majestic_exe
+    if not config.auto_detect:
+        return None
     if compatdata is None:
         return None
     pfx = compatdata / "pfx"
