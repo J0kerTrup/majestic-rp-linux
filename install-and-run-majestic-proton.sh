@@ -171,6 +171,10 @@ MAJESTIC_PLATFORM="${MAJESTIC_PLATFORM:-auto}"
 GTA_WINE_DRIVE="${GTA_WINE_DRIVE:-d}"
 MAJESTIC_PERMISSIONS="${MAJESTIC_PERMISSIONS:-1,3,4}"
 RESET_ROCKSTAR_DOCUMENTS="${RESET_ROCKSTAR_DOCUMENTS:-0}"
+PROTONTRICKS_WIN10="${PROTONTRICKS_WIN10:-1}"
+PROTONTRICKS_TIMEOUT="${PROTONTRICKS_TIMEOUT:-0}"
+PROTONTRICKS_STOP_PREFIX="${PROTONTRICKS_STOP_PREFIX:-1}"
+MAJESTIC_LAUNCHER_FLAGS="${MAJESTIC_LAUNCHER_FLAGS:---no-sandbox --disable-dev-shm-usage --disable-gpu-sandbox}"
 
 
 PROTON_VERB="${PROTON_VERB:-waitforexitandrun}"
@@ -178,6 +182,7 @@ APP_ID="${APP_ID:-}"
 MAJESTIC_INSTALLER_URL="${MAJESTIC_INSTALLER_URL:-https://cdn.majestic-files.net/launcher/cis/MajesticLauncherSetup.exe}"
 MAJESTIC_INSTALLER_PATH="${MAJESTIC_INSTALLER_PATH:-$SCRIPT_DIR/cache/MajesticLauncherSetup.exe}"
 MAJESTIC_INSTALLER_ARGS="${MAJESTIC_INSTALLER_ARGS:-/S}"
+MAJESTIC_INSTALLER_TIMEOUT="${MAJESTIC_INSTALLER_TIMEOUT:-30}"
 MAJESTIC_SOURCE_ROOT="${MAJESTIC_SOURCE_ROOT:-}"
 
 require_command() {
@@ -216,6 +221,56 @@ check_installer_dependencies() {
   die "Neither curl nor wget was found. Install curl or wget to download Majestic Launcher automatically."
 }
 
+force_prefix_windows_10() {
+  if [[ "$PROTONTRICKS_WIN10" != "1" ]]; then
+    log_debug "Windows 10 enforcement disabled by configuration" "Proton" "PROTONTRICKS_WIN10=$PROTONTRICKS_WIN10"
+    return 0
+  fi
+  if ! command -v protontricks >/dev/null 2>&1; then
+    log_debug "protontricks not found, skipping Windows 10 enforcement" "Proton"
+    return 0
+  fi
+
+  if [[ "$PROTONTRICKS_STOP_PREFIX" = "1" && -n "${PROTON:-}" && -x "${PROTON:-}" && -d "$COMPATDATA/pfx" ]]; then
+    local proton_dir proton_wineserver
+    proton_dir="$(dirname "$PROTON")"
+    proton_wineserver="$proton_dir/files/bin/wineserver"
+    [[ -x "$proton_wineserver" ]] || proton_wineserver="$proton_dir/bin/wineserver"
+    if [[ -x "$proton_wineserver" ]]; then
+      log_warn "Stopping Wine processes in active Proton prefix before protontricks win10" "Proton" "WINEPREFIX=$COMPATDATA/pfx wineserver=$proton_wineserver"
+      WINEPREFIX="$COMPATDATA/pfx" "$proton_wineserver" -k || log_debug "wineserver -k returned non-zero, continuing..." "Proton" "WINEPREFIX=$COMPATDATA/pfx"
+    else
+      log_debug "Proton wineserver was not found; skipping prefix stop before protontricks" "Proton" "PROTON=$PROTON"
+    fi
+  fi
+
+  local -a protontricks_command
+  if [[ "$PROTONTRICKS_TIMEOUT" =~ ^[0-9]+$ && "$PROTONTRICKS_TIMEOUT" -gt 0 ]] && command -v timeout >/dev/null 2>&1; then
+    protontricks_command=(timeout --foreground "${PROTONTRICKS_TIMEOUT}s" protontricks "$APP_ID" win10)
+  else
+    protontricks_command=(protontricks "$APP_ID" win10)
+  fi
+
+  log_info "Forcing Windows 10 for Proton prefix" "Proton" "APP_ID=$APP_ID timeout=${PROTONTRICKS_TIMEOUT:-none}s"
+  local exit_code
+  set +e
+  "${protontricks_command[@]}"
+  exit_code=$?
+  set -e
+
+  if [[ "$exit_code" = "0" ]]; then
+    log_success "Windows 10 mode applied to Proton prefix" "Proton" "APP_ID=$APP_ID"
+    return 0
+  fi
+
+  if [[ "$exit_code" = "124" ]]; then
+    log_warn "protontricks win10 timed out; continuing launcher startup" "Proton" "APP_ID=$APP_ID timeout=${PROTONTRICKS_TIMEOUT}s"
+  else
+    log_debug "protontricks win10 returned non-zero, continuing..." "Proton" "APP_ID=$APP_ID exit_code=$exit_code"
+  fi
+  return 0
+}
+
 validate_proton_verb() {
   log_debug "Validating Proton verb" "Proton" "PROTON_VERB=$PROTON_VERB"
   case "$PROTON_VERB" in
@@ -230,6 +285,32 @@ validate_majestic_platform() {
     auto|rgl|steam|egs) log_success "Majestic platform value is supported" "GTA" "MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM" ;;
     *) die "Unsupported MAJESTIC_PLATFORM='$MAJESTIC_PLATFORM'. Use auto, rgl, steam or egs." ;;
   esac
+}
+
+export_launch_environment() {
+  export STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}"
+  export STEAM_COMPAT_DATA_PATH="$COMPATDATA"
+  export STEAM_COMPAT_APP_ID="$APP_ID"
+  export SteamAppId="$APP_ID"
+  export SteamGameId="$APP_ID"
+  export STEAM_COMPAT_INSTALL_PATH="${STEAM_COMPAT_INSTALL_PATH:-$GTA_PATH}"
+  export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-winegstreamer=d}"
+
+  export MAJESTIC_PROTON_PLATFORM="$MAJESTIC_PLATFORM"
+  if [[ -z "${MAJESTIC_PROTON_NATIVE_PLATFORM:-}" ]]; then
+    if [[ "$MAJESTIC_PLATFORM" = "steam" ]]; then
+      export MAJESTIC_PROTON_NATIVE_PLATFORM="rgl"
+    else
+      export MAJESTIC_PROTON_NATIVE_PLATFORM="$MAJESTIC_PLATFORM"
+    fi
+  else
+    export MAJESTIC_PROTON_NATIVE_PLATFORM
+  fi
+  export MAJESTIC_GTA_WIN_PATH="${GTA_WINE_DRIVE^^}:\\"
+  export MAJESTIC_DISABLE_CEF_GPU="$DISABLE_CEF_GPU"
+  export MAJESTIC_LAUNCHER_FLAGS
+
+  log_debug "Exported Proton and Majestic environment" "Environment" "STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID STEAM_COMPAT_INSTALL_PATH=$STEAM_COMPAT_INSTALL_PATH SteamAppId=$SteamAppId SteamGameId=$SteamGameId WINEDLLOVERRIDES=$WINEDLLOVERRIDES MAJESTIC_PROTON_PLATFORM=$MAJESTIC_PROTON_PLATFORM MAJESTIC_PROTON_NATIVE_PLATFORM=$MAJESTIC_PROTON_NATIVE_PLATFORM MAJESTIC_GTA_WIN_PATH=$MAJESTIC_GTA_WIN_PATH MAJESTIC_DISABLE_CEF_GPU=$MAJESTIC_DISABLE_CEF_GPU MAJESTIC_LAUNCHER_FLAGS=$MAJESTIC_LAUNCHER_FLAGS"
 }
 
 backup_file() {
@@ -638,16 +719,34 @@ download_majestic_installer() {
 run_proton_installer() {
   local installer="$1"
   shift || true
+  local installer_args=("$@")
   local prefix_installer="$COMPATDATA/pfx/drive_c/MajesticLauncherSetup.exe"
   mkdir -p "$(dirname "$prefix_installer")"
   cp -f "$installer" "$prefix_installer"
-  log_info "Running Majestic Launcher installer through Proton" "Installer" "PROTON=$PROTON COMPATDATA=$COMPATDATA installer=$prefix_installer args=$*"
+  local -a proton_command timeout_prefix
+  proton_command=("$PROTON" waitforexitandrun "C:\\MajesticLauncherSetup.exe" "${installer_args[@]}")
+  timeout_prefix=()
+  if (( ${#installer_args[@]} > 0 )) && [[ "$MAJESTIC_INSTALLER_TIMEOUT" =~ ^[0-9]+$ && "$MAJESTIC_INSTALLER_TIMEOUT" -gt 0 ]]; then
+    if command -v timeout >/dev/null 2>&1; then
+      timeout_prefix=(timeout --foreground "${MAJESTIC_INSTALLER_TIMEOUT}s")
+    else
+      log_warn "timeout command not found; silent installer may wait indefinitely" "Installer" "timeout=$MAJESTIC_INSTALLER_TIMEOUT"
+    fi
+  fi
+  log_info "Running Majestic Launcher installer through Proton" "Installer" "PROTON=$PROTON COMPATDATA=$COMPATDATA installer=$prefix_installer args=${installer_args[*]:-} timeout=${MAJESTIC_INSTALLER_TIMEOUT}s"
+  local exit_code
+  set +e
+  trap - ERR
   STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}" \
   STEAM_COMPAT_DATA_PATH="$COMPATDATA" \
   STEAM_COMPAT_APP_ID="${STEAM_COMPAT_APP_ID:-$APP_ID}" \
   SteamAppId="${SteamAppId:-$APP_ID}" \
   SteamGameId="${SteamGameId:-$APP_ID}" \
-  "$PROTON" waitforexitandrun "C:\\MajesticLauncherSetup.exe" "$@"
+  "${timeout_prefix[@]}" "${proton_command[@]}"
+  exit_code=$?
+  trap on_error ERR
+  set -e
+  return "$exit_code"
 }
 
 install_majestic_launcher() {
@@ -659,10 +758,19 @@ install_majestic_launcher() {
   if [[ -n "$MAJESTIC_INSTALLER_ARGS" ]]; then
     # shellcheck disable=SC2206
     local silent_args=( $MAJESTIC_INSTALLER_ARGS )
-    if run_proton_installer "$installer" "${silent_args[@]}"; then
+    local silent_exit_code
+    set +e
+    trap - ERR
+    run_proton_installer "$installer" "${silent_args[@]}"
+    silent_exit_code=$?
+    trap on_error ERR
+    set -e
+    if [[ "$silent_exit_code" = "0" ]]; then
       log_success "Silent Majestic Launcher installer finished" "Installer"
+    elif [[ "$silent_exit_code" = "124" ]]; then
+      log_warn "Silent Majestic Launcher installer timed out; interactive install will be tried" "Installer" "timeout=${MAJESTIC_INSTALLER_TIMEOUT}s"
     else
-      log_warn "Silent Majestic Launcher installer returned non-zero; interactive install will be tried" "Installer"
+      log_warn "Silent Majestic Launcher installer returned non-zero; interactive install will be tried" "Installer" "exit_code=$silent_exit_code"
     fi
   fi
 
@@ -914,7 +1022,7 @@ patch_recovered_source_tree() {
   fi
 }
 
-log_debug "Resolved configuration values" "Environment" "GAME_WIDTH=$GAME_WIDTH GAME_HEIGHT=$GAME_HEIGHT GAME_WINDOWED=$GAME_WINDOWED GAME_BORDERLESS=$GAME_BORDERLESS DISABLE_CEF_GPU=$DISABLE_CEF_GPU MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM GTA_WINE_DRIVE=$GTA_WINE_DRIVE MAJESTIC_PERMISSIONS=$MAJESTIC_PERMISSIONS RESET_ROCKSTAR_DOCUMENTS=$RESET_ROCKSTAR_DOCUMENTS PROTON_VERB=$PROTON_VERB APP_ID=$APP_ID MAJESTIC_SOURCE_ROOT=$MAJESTIC_SOURCE_ROOT"
+log_debug "Resolved configuration values" "Environment" "GAME_WIDTH=$GAME_WIDTH GAME_HEIGHT=$GAME_HEIGHT GAME_WINDOWED=$GAME_WINDOWED GAME_BORDERLESS=$GAME_BORDERLESS DISABLE_CEF_GPU=$DISABLE_CEF_GPU MAJESTIC_PLATFORM=$MAJESTIC_PLATFORM GTA_WINE_DRIVE=$GTA_WINE_DRIVE MAJESTIC_PERMISSIONS=$MAJESTIC_PERMISSIONS RESET_ROCKSTAR_DOCUMENTS=$RESET_ROCKSTAR_DOCUMENTS PROTONTRICKS_WIN10=$PROTONTRICKS_WIN10 PROTONTRICKS_TIMEOUT=$PROTONTRICKS_TIMEOUT PROTON_VERB=$PROTON_VERB APP_ID=$APP_ID MAJESTIC_INSTALLER_TIMEOUT=$MAJESTIC_INSTALLER_TIMEOUT MAJESTIC_LAUNCHER_FLAGS=$MAJESTIC_LAUNCHER_FLAGS MAJESTIC_SOURCE_ROOT=$MAJESTIC_SOURCE_ROOT"
 check_base_dependencies
 validate_proton_verb
 validate_majestic_platform
@@ -970,15 +1078,8 @@ if [[ -z "$APP_ID" ]]; then
   log_info "Using AppID from detected compatdata folder" "Environment" "APP_ID=$APP_ID COMPATDATA=$COMPATDATA"
 fi
 print_prefix_banner "$COMPATDATA" "$APP_ID" "$GTA_PATH"
-
-if command -v protontricks >/dev/null 2>&1; then
-  log_info "Forcing Windows 10 for Proton prefix" "Proton" "APP_ID=$APP_ID"
-  protontricks "$APP_ID" win10 || log_debug "protontricks win10 returned non-zero, continuing..." "Proton"
-else
-  log_debug "protontricks not found, skipping Windows 10 enforcement" "Proton"
-fi
-
 PROTON="$(find_proton)"
+force_prefix_windows_10
 if ! MAJESTIC_EXE="$(find_majestic_exe)"; then
   install_majestic_launcher
   MAJESTIC_EXE="$(find_majestic_exe)" || die "Majestic Launcher.exe was not found after installation. Set MAJESTIC_EXE in $CONFIG_FILE."
@@ -986,6 +1087,7 @@ fi
 MAJESTIC_DIR="$(dirname "$MAJESTIC_EXE")"
 
 log_debug "Resolved launch paths" "Environment" "STEAM_ROOT=$STEAM_ROOT COMPATDATA=$COMPATDATA GTA_PATH=$GTA_PATH MAJESTIC_EXE=$MAJESTIC_EXE MAJESTIC_DIR=$MAJESTIC_DIR PROTON=$PROTON"
+export_launch_environment
 
 log_info "Creating Wine dosdevices directory" "Wine" "directory=$COMPATDATA/pfx/dosdevices"
 mkdir -p "$COMPATDATA/pfx/dosdevices"
@@ -999,29 +1101,6 @@ patch_settings_xml "$COMPATDATA/pfx/drive_c/users/steamuser/Documents/Rockstar G
 patch_runtime_configs
 reset_rockstar_documents
 patch_asar_app
-
-export STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}"
-export STEAM_COMPAT_DATA_PATH="$COMPATDATA"
-export STEAM_COMPAT_APP_ID="$APP_ID"
-export SteamAppId="$APP_ID"
-export SteamGameId="$APP_ID"
-export STEAM_COMPAT_INSTALL_PATH="${STEAM_COMPAT_INSTALL_PATH:-$GTA_PATH}"
-export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-winegstreamer=d}"
-
-export MAJESTIC_PROTON_PLATFORM="$MAJESTIC_PLATFORM"
-if [[ -z "${MAJESTIC_PROTON_NATIVE_PLATFORM:-}" ]]; then
-  if [[ "$MAJESTIC_PLATFORM" = "steam" ]]; then
-    export MAJESTIC_PROTON_NATIVE_PLATFORM="rgl"
-  else
-    export MAJESTIC_PROTON_NATIVE_PLATFORM="$MAJESTIC_PLATFORM"
-  fi
-else
-  export MAJESTIC_PROTON_NATIVE_PLATFORM
-fi
-export MAJESTIC_GTA_WIN_PATH="${GTA_WINE_DRIVE^^}:\\"
-export MAJESTIC_DISABLE_CEF_GPU="$DISABLE_CEF_GPU"
-
-log_debug "Exported Proton and Majestic environment" "Environment" "STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID STEAM_COMPAT_INSTALL_PATH=$STEAM_COMPAT_INSTALL_PATH SteamAppId=$SteamAppId SteamGameId=$SteamGameId WINEDLLOVERRIDES=$WINEDLLOVERRIDES MAJESTIC_PROTON_PLATFORM=$MAJESTIC_PROTON_PLATFORM MAJESTIC_PROTON_NATIVE_PLATFORM=$MAJESTIC_PROTON_NATIVE_PLATFORM MAJESTIC_GTA_WIN_PATH=$MAJESTIC_GTA_WIN_PATH MAJESTIC_DISABLE_CEF_GPU=$MAJESTIC_DISABLE_CEF_GPU"
 if [[ "$MAJESTIC_PLATFORM" = "steam" ]]; then
   log_info "Steam flow selected" "Steam" "flow=steam APP_ID=$APP_ID STEAM_ROOT=$STEAM_ROOT PROTON=$PROTON COMPATDATA=$COMPATDATA GTA_PATH=$GTA_PATH launch_exe=$MAJESTIC_EXE"
   if [[ "$(basename "$COMPATDATA")" != "$GTA_STEAM_APP_ID" ]]; then
@@ -1033,7 +1112,12 @@ fi
 log_info "Changing working directory to Majestic Launcher directory" "Launcher" "directory=$MAJESTIC_DIR"
 cd "$MAJESTIC_DIR"
 log_info "Starting Majestic Launcher with Proton" "Launcher" "PROTON_VERB=$PROTON_VERB"
-log_debug "Majestic launch command" "Launcher" "flow=$MAJESTIC_PLATFORM command=$PROTON $PROTON_VERB $MAJESTIC_EXE platform=$MAJESTIC_PLATFORM gta_win_path=${GTA_WINE_DRIVE^^}:\\"
+launcher_args=()
+if [[ -n "$MAJESTIC_LAUNCHER_FLAGS" ]]; then
+  # shellcheck disable=SC2206
+  launcher_args=( $MAJESTIC_LAUNCHER_FLAGS )
+fi
+log_debug "Majestic launch command" "Launcher" "flow=$MAJESTIC_PLATFORM command=$PROTON $PROTON_VERB $MAJESTIC_EXE ${launcher_args[*]:-} platform=$MAJESTIC_PLATFORM gta_win_path=${GTA_WINE_DRIVE^^}:\\"
 log_success "Launcher preparation completed; handing control to Proton" "Launcher"
 
-exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE"
+exec "$PROTON" "$PROTON_VERB" "$MAJESTIC_EXE" "${launcher_args[@]}"
