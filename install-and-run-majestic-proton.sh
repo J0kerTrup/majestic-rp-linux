@@ -1106,33 +1106,67 @@ start_discord_bridge() {
 
   warn_if_discord_ipc_missing
   log_info "Starting Discord RPC bridge" "Discord" "bridge=$bridge COMPATDATA=$COMPATDATA"
+  
   case "${bridge,,}" in
     *.exe|*.bat|*.cmd)
-      "$PROTON" runinprefix "$bridge" >> "$LOG_FILE" 2>&1 &
+      # Подготавливаем VBScript для скрытого запуска внутри префикса
+      local vbs_script="$COMPATDATA/pfx/drive_c/run_bridge_hidden.vbs"
+      local prefix_bridge="$COMPATDATA/pfx/drive_c/winediscordipcbridge.exe"
+      
+      cp -f "$bridge" "$prefix_bridge"
+      printf 'Set objShell = WScript.CreateObject("WScript.Shell")\nobjShell.Run "C:\winediscordipcbridge.exe", 0, False\n' > "$vbs_script"
+      
+      # Запускаем в фоне с задержкой, чтобы Proton успел захватить pfx.lock для лаунчера
+      (
+        local delay="${DISCORD_BRIDGE_START_DELAY:-8}"
+        [[ "$delay" =~ ^[0-9]+([.][0-9]+)?$ ]] || delay=8
+        sleep "$delay"
+        
+        STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}" \
+        STEAM_COMPAT_DATA_PATH="$COMPATDATA" \
+        STEAM_COMPAT_APP_ID="${STEAM_COMPAT_APP_ID:-$APP_ID}" \
+        SteamAppId="${SteamAppId:-$APP_ID}" \
+        SteamGameId="${SteamGameId:-$APP_ID}" \
+        WINEDEBUG=-all \
+        "$PROTON" run wscript.exe "C:\\run_bridge_hidden.vbs" </dev/null >> "$LOG_FILE" 2>&1
+      ) &
+      DISCORD_BRIDGE_PID=$!
       ;;
     *)
+      # Для нативных Linux-бинарников оставляем стандартный запуск
       chmod +x "$bridge" 2>/dev/null || true
       WINEPREFIX="$COMPATDATA/pfx" \
       STEAM_COMPAT_DATA_PATH="$COMPATDATA" \
       STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}" \
       "$bridge" >> "$LOG_FILE" 2>&1 &
+      DISCORD_BRIDGE_PID=$!
+
+      if [[ "$DISCORD_BRIDGE_START_DELAY" =~ ^[0-9]+([.][0-9]+)?$ ]] && command -v sleep >/dev/null 2>&1; then
+        sleep "$DISCORD_BRIDGE_START_DELAY"
+      fi
       ;;
   esac
-  DISCORD_BRIDGE_PID=$!
-  log_success "Discord RPC bridge started" "Discord" "pid=$DISCORD_BRIDGE_PID delay=${DISCORD_BRIDGE_START_DELAY}s"
-
-  if [[ "$DISCORD_BRIDGE_START_DELAY" =~ ^[0-9]+([.][0-9]+)?$ ]] && command -v sleep >/dev/null 2>&1; then
-    sleep "$DISCORD_BRIDGE_START_DELAY"
-  fi
+  
+  log_success "Discord RPC bridge scheduled/started" "Discord" "pid=$DISCORD_BRIDGE_PID"
 }
 
 cleanup_discord_bridge() {
   [[ -n "${DISCORD_BRIDGE_PID:-}" ]] || return 0
+  
+  log_info "Stopping Discord RPC bridge" "Discord"
+  
+  # 1. Сначала принудительно убиваем процесс Windows внутри Proton (если использовался .exe мост)
+  STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-$STEAM_ROOT}" \
+  STEAM_COMPAT_DATA_PATH="$COMPATDATA" \
+  STEAM_COMPAT_APP_ID="${STEAM_COMPAT_APP_ID:-$APP_ID}" \
+  "$PROTON" run taskkill /F /IM winediscordipcbridge.exe >/dev/null 2>&1 || true
+
+  # 2. Затем убиваем bash-сабшелл (ожидание) или нативный Linux-процесс моста
   if kill -0 "$DISCORD_BRIDGE_PID" >/dev/null 2>&1; then
-    log_info "Stopping Discord RPC bridge" "Discord" "pid=$DISCORD_BRIDGE_PID"
     kill "$DISCORD_BRIDGE_PID" >/dev/null 2>&1 || true
     wait "$DISCORD_BRIDGE_PID" >/dev/null 2>&1 || true
   fi
+  
   DISCORD_BRIDGE_PID=""
 }
 
