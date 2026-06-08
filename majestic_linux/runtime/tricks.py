@@ -41,6 +41,7 @@ def select_tricks_tool(platform: str, override: str = "auto") -> tuple[str | Non
 def build_win10_plan(config: RunnerConfig, platform: str, compatdata: Path) -> TricksPlan:
     tool, reason = select_tricks_tool(platform, config.tricks_tool)
     env = os.environ.copy()
+    _sanitize_fontconfig_env(env)
     if tool == "protontricks":
         app_id = config.app_id if config.app_id and config.app_id != "0" else "271590"
         return TricksPlan(tool, reason, ["protontricks", app_id, "win10"], env)
@@ -62,6 +63,11 @@ def apply_win10_mode(
         if logger:
             logger.info("Win10 tricks step disabled")
         return
+    prefix = compatdata / "pfx"
+    if prefix_is_win10(prefix):
+        if logger:
+            logger.info("Win10 mode already applied in prefix; skipping protontricks/winetricks")
+        return
     plan = build_win10_plan(config, platform, compatdata)
     if plan.tool is None:
         raise RunnerError(f"Cannot apply win10 mode: {plan.reason}")
@@ -73,3 +79,29 @@ def apply_win10_mode(
     result = subprocess.run(plan.argv, env=plan.env, timeout=timeout, check=False)
     if result.returncode != 0:
         raise RunnerError(f"{plan.tool} exited with code {result.returncode}")
+
+
+def prefix_is_win10(prefix: Path) -> bool:
+    system_reg = prefix / "system.reg"
+    if not system_reg.exists():
+        return False
+    text = system_reg.read_text(encoding="utf-8", errors="ignore")
+    return _reg_section_is_win10(text, r"Software\\Microsoft\\Windows NT\\CurrentVersion") and _reg_section_is_win10(
+        text, r"Software\\Wow6432Node\\Microsoft\\Windows NT\\CurrentVersion"
+    )
+
+
+def _reg_section_is_win10(text: str, section: str) -> bool:
+    marker = f"[{section}]"
+    start = text.find(marker)
+    if start < 0:
+        return False
+    next_section = text.find("\n[", start + len(marker))
+    block = text[start:] if next_section < 0 else text[start:next_section]
+    return '"ProductName"="Microsoft Windows 10"' in block and '"CurrentMajorVersionNumber"=dword:0000000a' in block
+
+
+def _sanitize_fontconfig_env(env: dict[str, str]) -> None:
+    for key in ("FONTCONFIG_FILE", "FONTCONFIG_PATH", "FONTCONFIG_SYSROOT"):
+        env.pop(key, None)
+    env["FC_FONTATIONS"] = "0"

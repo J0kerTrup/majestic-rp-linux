@@ -14,6 +14,8 @@ class RunnerConfig:
     game_height: int = 1080
     game_windowed: bool = True
     game_borderless: bool = True
+    gpu_mode: str = "auto"
+    gpu_device_name: str = ""
     disable_cef_gpu: bool = True
     launcher_flags: str = "--no-sandbox --disable-dev-shm-usage --disable-gpu-sandbox --disable-gpu --disable-gpu-compositing --disable-direct-composition --disable-features=DirectComposition,CalculateNativeWinOcclusion"
     selected_platform: str = "auto"
@@ -78,6 +80,8 @@ def load_config(config_path: Path | str = "majestic-runner.conf", *, dry_run: bo
         game_height=parse_int(values.get("GAME_HEIGHT"), 1080),
         game_windowed=parse_bool(values.get("GAME_WINDOWED"), True),
         game_borderless=parse_bool(values.get("GAME_BORDERLESS"), True),
+        gpu_mode=values.get("MAJESTIC_GPU_MODE", "auto").strip().lower() or "auto",
+        gpu_device_name=values.get("MAJESTIC_GPU_DEVICE_NAME", "").strip(),
         disable_cef_gpu=parse_bool(values.get("DISABLE_CEF_GPU"), True),
         launcher_flags=values.get("MAJESTIC_LAUNCHER_FLAGS", RunnerConfig.launcher_flags),
         selected_platform=platform_raw or "rgl",

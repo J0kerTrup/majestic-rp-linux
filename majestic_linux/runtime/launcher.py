@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import shlex
 import subprocess
+import time
 import urllib.request
 from pathlib import Path
 
@@ -32,6 +33,19 @@ def ensure_installer(config: RunnerConfig, compatdata: Path, *, dry_run: bool, l
     target.parent.mkdir(parents=True, exist_ok=True)
     urllib.request.urlretrieve(config.installer_url, target)
     return target
+
+
+def wait_for_majestic_exe(config: RunnerConfig, compatdata: Path, *, timeout: int, logger: logging.Logger | None = None) -> Path | None:
+    deadline = time.monotonic() + max(timeout, 0)
+    while True:
+        existing = find_majestic_exe(config, compatdata)
+        if existing:
+            return existing
+        if time.monotonic() >= deadline:
+            return None
+        if logger:
+            logger.debug("Waiting for Majestic Launcher.exe to appear in prefix")
+        time.sleep(1)
 
 
 def install_majestic_launcher(
@@ -66,4 +80,4 @@ def install_majestic_launcher(
         raise RunnerError(f"Majestic installer timed out after {config.installer_timeout}s") from exc
     if result.returncode != 0:
         raise RunnerError(f"Majestic installer exited with code {result.returncode}")
-    return find_majestic_exe(config, compatdata)
+    return wait_for_majestic_exe(config, compatdata, timeout=config.installer_timeout, logger=logger)

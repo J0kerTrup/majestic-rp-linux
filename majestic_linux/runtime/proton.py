@@ -46,6 +46,8 @@ def build_proton_command(
             "GTA_PATH": str(wine_mapping.gta_path),
             "MAJESTIC_GTA_WIN_PATH": wine_mapping.wine_gta_path,
             "DISABLE_CEF_GPU": "1" if config.disable_cef_gpu else "0",
+            "PROTON_USE_XALIA": "0",
+            "DXVK_STATE_CACHE": "1",
             "GAME_WIDTH": str(config.game_width),
             "GAME_HEIGHT": str(config.game_height),
             "GAME_WINDOWED": "1" if config.game_windowed else "0",
@@ -54,6 +56,7 @@ def build_proton_command(
     )
     if config.disable_cef_gpu:
         env.setdefault("CEF_DISABLE_GPU", "1")
+    apply_gpu_selection(env, config)
     if config.radio_disable_winegstreamer:
         env["WINEDLLOVERRIDES"] = _with_dll_override(env.get("WINEDLLOVERRIDES", ""), "winegstreamer=d")
     apply_library_path(env, getattr(config, "runtime_library_paths", []))
@@ -77,3 +80,15 @@ def _with_dll_override(current: str, override: str) -> str:
     name = override.split("=", 1)[0].lower()
     parts = [part for part in current.split(";") if part and not part.lower().startswith(name + "=")]
     return ";".join([override, *parts])
+
+
+def apply_gpu_selection(env: dict[str, str], config: RunnerConfig) -> None:
+    mode = (config.gpu_mode or "auto").lower()
+    if config.gpu_device_name:
+        env["DXVK_FILTER_DEVICE_NAME"] = config.gpu_device_name
+    if mode in {"prime", "discrete"}:
+        env.setdefault("DRI_PRIME", "1")
+    if mode == "nvidia":
+        env.setdefault("__NV_PRIME_RENDER_OFFLOAD", "1")
+        env.setdefault("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
+        env.setdefault("__VK_LAYER_NV_optimus", "NVIDIA_only")

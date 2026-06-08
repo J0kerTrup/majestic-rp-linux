@@ -7,6 +7,11 @@ GAME_HEIGHT=1080
 GAME_WINDOWED=1
 GAME_BORDERLESS=1
 
+# GPU selection: auto, prime/discrete, nvidia. Leave auto for most systems.
+# MAJESTIC_GPU_DEVICE_NAME can force a DXVK/Vulkan device name, e.g. "NVIDIA GeForce RTX 5060".
+MAJESTIC_GPU_MODE=auto
+MAJESTIC_GPU_DEVICE_NAME=
+
 # Proton/Electron launcher flags.
 DISABLE_CEF_GPU=1
 MAJESTIC_LAUNCHER_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu-sandbox --disable-gpu --disable-gpu-compositing --disable-direct-composition --disable-features=DirectComposition,CalculateNativeWinOcclusion"
