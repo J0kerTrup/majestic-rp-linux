@@ -326,40 +326,6 @@ confirmation. The GTA V installation path is protected and is not removed.
 ./scripts/check.sh
 ```
 
-## Docker
-
-Docker is intended for development checks and lightweight diagnostics. Running
-GTA V/Proton itself inside Docker is not the normal path because Steam Runtime,
-GPU, X11/Wayland, controller devices, and the Proton prefix are host-sensitive.
-
-Build the image:
-
-```bash
-docker build -t majestic-linux-runner:dev .
-```
-
-Run the test suite:
-
-```bash
-docker compose run --rm test
-```
-
-Open a development shell:
-
-```bash
-docker compose --profile dev run --rm shell
-```
-
-Host diagnostics can be run with read-only Steam mounts:
-
-```bash
-docker compose --profile host-diagnostics run --rm doctor
-docker compose --profile host-diagnostics run --rm doctor-radio
-```
-
-If your Steam library lives outside `~/.steam` or `~/.local/share/Steam`, add
-that path to `docker-compose.yml` before using the diagnostic profile.
-
 Architecture:
 
 ```text
