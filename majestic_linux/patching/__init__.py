@@ -1,1 +1,0 @@
-"""Majestic launcher patching helpers."""
