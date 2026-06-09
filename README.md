@@ -7,12 +7,16 @@ configured, and launches Majestic through Proton.
 
 Support Discord: <https://discord.gg/fkNExq39Yg>
 
-## Install
+## Install & Run
+
+Make sure there is only English symbols to the script's location!
 
 ```bash
 python3 --version
 chmod +x install-and-run-majestic-proton.sh
 ./install-and-run-majestic-proton.sh config
+./install-and-run-majestic-proton.sh doctor
+./install-and-run-majestic-proton.sh run
 ```
 
 The wrapper is intentionally small and only calls:
