@@ -8,6 +8,7 @@ yarn-error.log*
 lerna-debug.log*
 
 # _pycache_
+cache
 majestic_linux/__pycache__
 majestic_linux/*/__pycache__
 
