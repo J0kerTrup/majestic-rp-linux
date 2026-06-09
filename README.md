@@ -16,6 +16,7 @@ python3 --version
 chmod +x install-and-run-majestic-proton.sh
 ./install-and-run-majestic-proton.sh config
 ./install-and-run-majestic-proton.sh doctor
+./install-and-run-majestic-proton.sh patch
 ./install-and-run-majestic-proton.sh run
 ```
 
