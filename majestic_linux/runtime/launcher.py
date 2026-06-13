@@ -67,8 +67,6 @@ def install_majestic_launcher(
         "STEAM_COMPAT_DATA_PATH": str(compatdata),
         "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(steam_root or ""),
         "STEAM_COMPAT_APP_ID": app_id,
-        "SteamAppId": app_id,
-        "SteamGameId": app_id,
     }
     argv = [str(proton_path), "waitforexitandrun", str(installer), *shlex.split(config.installer_args)]
     if logger:

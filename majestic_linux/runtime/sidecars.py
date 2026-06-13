@@ -105,8 +105,6 @@ def sidecar_env(context: SidecarContext, extra: dict[str, str] | None = None) ->
             "STEAM_COMPAT_DATA_PATH": str(context.compatdata),
             "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(context.steam_root or ""),
             "STEAM_COMPAT_APP_ID": context.app_id,
-            "SteamAppId": context.app_id,
-            "SteamGameId": context.app_id,
         }
     )
     if extra:

@@ -258,8 +258,6 @@ def _proton_sidecar_env(compatdata: Path, steam_root: Path | None, app_id: str) 
             "STEAM_COMPAT_DATA_PATH": str(compatdata),
             "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(steam_root or ""),
             "STEAM_COMPAT_APP_ID": app_id,
-            "SteamAppId": app_id,
-            "SteamGameId": app_id,
             "WINEDEBUG": "-all",
         }
     )

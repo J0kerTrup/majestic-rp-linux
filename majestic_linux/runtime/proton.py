@@ -39,8 +39,6 @@ def build_proton_command(
             "STEAM_COMPAT_DATA_PATH": str(compatdata),
             "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(steam_root or ""),
             "STEAM_COMPAT_APP_ID": app_id,
-            "SteamAppId": app_id,
-            "SteamGameId": app_id,
             "MAJESTIC_PLATFORM": platform,
             "MAJESTIC_PROTON_PLATFORM": config.native_platform or platform,
             "MAJESTIC_DISABLE_CEF_GPU": "1" if config.disable_cef_gpu else "0",
@@ -56,6 +54,9 @@ def build_proton_command(
             "GAME_BORDERLESS": "1" if config.game_borderless else "0",
         }
     )
+    if platform == "steam":
+        env["SteamAppId"] = app_id
+        env["SteamGameId"] = app_id
     if config.disable_cef_gpu:
         env.setdefault("CEF_DISABLE_GPU", "1")
     apply_gpu_selection(env, config)
@@ -72,7 +73,7 @@ def _steam_app_id(config: RunnerConfig) -> str:
 
 def _sanitize_host_launcher_env(env: dict[str, str]) -> None:
     for key in list(env):
-        if key.startswith(("CODEX_", "VSCODE_", "ELECTRON_")) or key in {"NODE_OPTIONS"}:
+        if key.startswith(("CODEX_", "VSCODE_", "ELECTRON_")) or key in {"NODE_OPTIONS", "SteamAppId", "SteamGameId"}:
             env.pop(key, None)
 
 
