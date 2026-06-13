@@ -108,6 +108,8 @@ GAME_BORDERLESS=1
 MAJESTIC_GPU_MODE=auto
 DISABLE_CEF_GPU=1
 GTA_WINE_DRIVE=g
+MAJESTIC_STORAGE_PATH=
+MAJESTIC_STORAGE_WINE_DRIVE=m
 MAJESTIC_LOG_LEVEL=INFO
 DRY_RUN=0
 ```
@@ -120,6 +122,7 @@ MAJESTIC_INSTALLER_PATH=
 MAJESTIC_INSTALLER_ARGS=
 MAJESTIC_INSTALLER_TIMEOUT=30
 PROTONTRICKS_WIN10=1
+TRICKS_POWERSHELL=1
 PROTONTRICKS_TIMEOUT=0
 TRICKS_TOOL=auto
 EMOJI_FONT_URL="https://raw.githubusercontent.com/thedemons/merge_color_emoji_font/main/seguiemj.ttf"
@@ -166,11 +169,12 @@ is enabled only by `doctor-radio`, `run --radio-safe`, or
 1. Loads config and applies environment overrides.
 2. Detects Steam root, Proton, GTA V, compatdata, Majestic Launcher, and platform.
 3. Maps the real GTA V directory into the Wine prefix, usually as `G:`.
-4. Runs first-launch setup if the setup marker is missing.
-5. Applies launcher patching and repair checks.
-6. Prepares fonts, registry tweaks, Caps Lock cleanup, and helper sidecars.
-7. Launches Majestic Launcher through Proton.
-8. Cleans only the current prefix on exit.
+4. Optionally maps a custom Majestic storage directory into the prefix.
+5. Runs first-launch setup if the setup marker is missing.
+6. Applies launcher patching and repair checks.
+7. Prepares fonts, registry tweaks, Caps Lock cleanup, and helper sidecars.
+8. Launches Majestic Launcher through Proton.
+9. Cleans only the current prefix on exit.
 
 Detection scans Steam libraries from `libraryfolders.vdf` and common
 Heroic/Epic locations. Platform detection checks GTA files:
@@ -194,12 +198,38 @@ First `run` also performs setup automatically when the marker is missing. Use
 diagnostics.
 
 The setup path installs Majestic Launcher when missing, prepares the prefix,
-applies Win10/corefonts/emoji font fixes, applies Wine registry tweaks, and
-patches the Majestic launcher JavaScript inside `app.asar` or unpacked app
-files.
+applies Win10/corefonts/emoji font fixes, installs PowerShell for Electron disk
+detection, applies Wine registry tweaks, and patches the Majestic launcher
+JavaScript inside `app.asar` or unpacked app files.
+
+PowerShell is installed silently through `protontricks`/`winetricks` when
+`TRICKS_POWERSHELL=1`. This fixes Majestic Launcher crashes like
+`All disk info providers failed` from `node-disk-info`, because the launcher can
+then use its PowerShell fallback to read mounted drives inside the Wine prefix.
 
 The runner launches Proton from the Majestic executable directory. This avoids a
 class of Wine/Proton issues around spaces and non-trivial paths.
+
+## Custom Storage Drive
+
+Majestic Launcher can install its multiplayer files to any visible Windows
+drive. To store those files outside the Proton prefix, configure a host folder
+and a Wine drive letter:
+
+```ini
+MAJESTIC_STORAGE_PATH=/home/user/Games/MajesticFiles
+MAJESTIC_STORAGE_WINE_DRIVE=m
+```
+
+The folder from `MAJESTIC_STORAGE_PATH` is mounted inside the Wine/Proton prefix
+as the drive letter from `MAJESTIC_STORAGE_WINE_DRIVE`. The default letter is
+`M:`, so the example above makes `/home/user/Games/MajesticFiles` appear in
+Majestic Launcher as drive `M:`.
+
+When the launcher asks where to install Majestic files, choose that mounted
+drive letter. The runner creates the host folder when missing and keeps the
+mapping updated on every launch. Leave `MAJESTIC_STORAGE_PATH` empty to disable
+this extra drive. Do not use the same letter as `GTA_WINE_DRIVE`.
 
 ## Win Key Blocker
 

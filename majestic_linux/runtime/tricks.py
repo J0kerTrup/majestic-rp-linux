@@ -18,6 +18,8 @@ class TricksPlan:
     argv: list[str]
     env: dict[str, str]
 
+POWERSHELL_MARKER_NAME = ".majestic-runner-powershell.done"
+
 
 def _has_tool(name: str) -> bool:
     return shutil.which(name) is not None
@@ -51,6 +53,19 @@ def build_win10_plan(config: RunnerConfig, platform: str, compatdata: Path) -> T
     return TricksPlan(None, reason, [], env)
 
 
+def build_powershell_plan(config: RunnerConfig, platform: str, compatdata: Path) -> TricksPlan:
+    tool, reason = select_tricks_tool(platform, config.tricks_tool)
+    env = os.environ.copy()
+    _sanitize_fontconfig_env(env)
+    if tool == "protontricks":
+        app_id = config.app_id if config.app_id and config.app_id != "0" else "271590"
+        return TricksPlan(tool, reason, ["protontricks", app_id, "-q", "powershell"], env)
+    if tool == "winetricks":
+        env["WINEPREFIX"] = str(compatdata / "pfx")
+        return TricksPlan(tool, reason, ["winetricks", "-q", "powershell"], env)
+    return TricksPlan(None, reason, [], env)
+
+
 def apply_win10_mode(
     config: RunnerConfig,
     platform: str,
@@ -79,6 +94,46 @@ def apply_win10_mode(
     result = subprocess.run(plan.argv, env=plan.env, timeout=timeout, check=False)
     if result.returncode != 0:
         raise RunnerError(f"{plan.tool} exited with code {result.returncode}")
+
+
+def apply_powershell(
+    config: RunnerConfig,
+    platform: str,
+    compatdata: Path,
+    *,
+    dry_run: bool,
+    logger: logging.Logger | None = None,
+) -> None:
+    if not config.tricks_powershell:
+        if logger:
+            logger.info("PowerShell tricks step disabled")
+        return
+    if powershell_setup_is_complete(compatdata):
+        if logger:
+            logger.info("PowerShell already installed by runner; skipping protontricks/winetricks")
+        return
+    plan = build_powershell_plan(config, platform, compatdata)
+    if plan.tool is None:
+        raise RunnerError(f"Cannot install PowerShell: {plan.reason}")
+    if logger:
+        logger.info("Installing PowerShell silently via %s: %s", plan.tool, " ".join(plan.argv))
+    if dry_run:
+        return
+    timeout = config.tricks_timeout if config.tricks_timeout > 0 else None
+    result = subprocess.run(plan.argv, env=plan.env, timeout=timeout, check=False)
+    if result.returncode != 0:
+        raise RunnerError(f"{plan.tool} powershell exited with code {result.returncode}")
+    marker = powershell_setup_marker(compatdata)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("ok\n", encoding="utf-8")
+
+
+def powershell_setup_marker(compatdata: Path) -> Path:
+    return compatdata / "pfx" / POWERSHELL_MARKER_NAME
+
+
+def powershell_setup_is_complete(compatdata: Path) -> bool:
+    return powershell_setup_marker(compatdata).exists()
 
 
 def prefix_is_win10(prefix: Path) -> bool:

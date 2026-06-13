@@ -15,9 +15,9 @@ from ..runtime.launcher import install_majestic_launcher
 from ..runtime.multiplayer_repair import latest_repair_time, repair_gta_conflicts, repair_multiplayer_cache
 from ..runtime.proton import build_proton_command, run_proton_managed
 from ..runtime.registry import apply_wine_registry_fixups
-from ..runtime.tricks import apply_win10_mode
+from ..runtime.tricks import apply_powershell, apply_win10_mode, powershell_setup_is_complete
 from ..runtime.win_blocker import configure_win_blocker_sidecar, stop_win_blocker
-from ..runtime.wine import ensure_egs_launcher_symlink, prepare_wine_mapping
+from ..runtime.wine import ensure_egs_launcher_symlink, prepare_optional_storage_drive, prepare_wine_mapping
 from ..radio.doctor import build_radio_report, radio_safe_env
 from .context import load_context
 
@@ -36,12 +36,13 @@ def _setup_marker(compatdata: Path) -> Path:
     return compatdata / "pfx" / SETUP_MARKER_NAME
 
 
-def _setup_is_complete(result: DetectionResult) -> bool:
+def _setup_is_complete(config, result: DetectionResult) -> bool:
     return (
         result.compatdata_path is not None
         and result.majestic_exe is not None
         and _setup_marker(result.compatdata_path).exists()
         and emoji_font_fix_is_applied(result.compatdata_path)
+        and (not config.tricks_powershell or powershell_setup_is_complete(result.compatdata_path))
     )
 
 
@@ -61,18 +62,32 @@ def _ensure_majestic_launcher(config, result: DetectionResult, logger) -> None:
         raise RunnerError("Majestic Launcher.exe is still missing after installer step in MajesticLauncher or MajesticLauncherGLOBAL")
 
 
+def _prepare_wine_drives(config, result: DetectionResult, logger):
+    mapping = prepare_wine_mapping(result.compatdata_path, result.gta_path, config.gta_wine_drive, dry_run=config.dry_run, logger=logger)
+    prepare_optional_storage_drive(
+        result.compatdata_path,
+        config.majestic_storage_path,
+        config.majestic_storage_wine_drive,
+        reserved_letters={config.gta_wine_drive.lower()},
+        dry_run=config.dry_run,
+        logger=logger,
+    )
+    return mapping
+
+
 def _prepare_prefix_and_launcher(context, logger, *, force: bool = False) -> None:
     config, result = context.config, context.result
     _require_launch_paths(result)
-    if not force and _setup_is_complete(result):
+    _prepare_wine_drives(config, result, logger)
+    if not force and _setup_is_complete(config, result):
         logger.info("One-time setup already completed; skipping patch/setup steps")
         return
     _ensure_majestic_launcher(config, result, logger)
     config.runtime_library_paths = prepare_proton_runtime_fixups(result.proton_path, dry_run=config.dry_run, logger=logger)
     if result.selected_platform == "egs":
         ensure_egs_launcher_symlink(result.gta_path, dry_run=config.dry_run, logger=logger)
-    prepare_wine_mapping(result.compatdata_path, result.gta_path, config.gta_wine_drive, dry_run=config.dry_run, logger=logger)
     apply_win10_mode(config, result.selected_platform, result.compatdata_path, dry_run=config.dry_run, logger=logger)
+    apply_powershell(config, result.selected_platform, result.compatdata_path, dry_run=config.dry_run, logger=logger)
     apply_wine_registry_fixups(config, result.compatdata_path, dry_run=config.dry_run, logger=logger)
     apply_emoji_font_fix(config, result.compatdata_path, dry_run=config.dry_run, logger=logger)
     report = patch_js_tree(_patch_root(config, result), dry_run=config.dry_run, logger=logger, permissions=config.majestic_permissions)
@@ -207,11 +222,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         logger.warning("Wine GStreamer is disabled for this run: WINEDLLOVERRIDES=winegstreamer=d")
     _apply_cli_modes(config, args)
     _require_launch_paths(result)
-    if not _setup_is_complete(result):
+    if not _setup_is_complete(config, result):
         _prepare_prefix_and_launcher(context, logger)
     _ensure_majestic_launcher(config, result, logger)
     config.runtime_library_paths = prepare_proton_runtime_fixups(result.proton_path, dry_run=config.dry_run, logger=logger)
-    mapping = prepare_wine_mapping(result.compatdata_path, result.gta_path, config.gta_wine_drive, dry_run=config.dry_run, logger=logger)
+    mapping = _prepare_wine_drives(config, result, logger)
     clear_caps_lock(dry_run=config.dry_run, logger=logger)
     command = build_proton_command(config, result.proton_path, result.compatdata_path, result.steam_root, result.majestic_exe, result.selected_platform, mapping)
     discord = configure_discord_bridge_environment(

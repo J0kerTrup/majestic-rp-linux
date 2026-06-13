@@ -171,6 +171,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"Python:            {sys.version.split()[0]}")
     print_detection(result)
     print(f"Wine drive:        {config.gta_wine_drive.upper()}:")
+    if config.majestic_storage_path:
+        print(f"Storage drive:     {config.majestic_storage_wine_drive.upper()}: -> {config.majestic_storage_path}")
+    else:
+        print("Storage drive:     disabled")
     if result.compatdata_path:
         plan = build_win10_plan(config, result.selected_platform, result.compatdata_path)
         print(f"Tricks tool:       {plan.tool or '-'} ({plan.reason})")
