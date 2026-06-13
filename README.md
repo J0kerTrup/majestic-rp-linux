@@ -172,7 +172,7 @@ is enabled only by `doctor-radio`, `run --radio-safe`, or
 4. Optionally maps a custom Majestic storage directory into the prefix.
 5. Runs first-launch setup if the setup marker is missing.
 6. Applies launcher patching and repair checks.
-7. Prepares fonts, registry tweaks, Caps Lock cleanup, and helper sidecars.
+7. Prepares fonts, Caps Lock cleanup, and helper sidecars.
 8. Launches Majestic Launcher through Proton.
 9. Cleans only the current prefix on exit.
 
@@ -190,7 +190,7 @@ Win10 compatibility mode is selected by platform:
 
 - Steam uses `protontricks`.
 - EGS/Heroic uses `winetricks`.
-- RGL uses `protontricks` if available, otherwise `winetricks`.
+- RGL and other non-Steam launches prefer `winetricks`.
 
 `install` performs the one-time setup. `patch` forces setup/patching again.
 First `run` also performs setup automatically when the marker is missing. Use
@@ -199,8 +199,8 @@ diagnostics.
 
 The setup path installs Majestic Launcher when missing, prepares the prefix,
 applies Win10/corefonts/emoji font fixes, installs PowerShell for Electron disk
-detection, applies Wine registry tweaks, and patches the Majestic launcher
-JavaScript inside `app.asar` or unpacked app files.
+detection, and patches the Majestic launcher JavaScript inside `app.asar` or
+unpacked app files.
 
 PowerShell is installed silently through `protontricks`/`winetricks` when
 `TRICKS_POWERSHELL=1`. This fixes Majestic Launcher crashes like

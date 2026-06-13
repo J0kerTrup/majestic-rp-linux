@@ -31,12 +31,11 @@ def select_tricks_tool(platform: str, override: str = "auto") -> tuple[str | Non
         return (override, "forced by TRICKS_TOOL") if _has_tool(override) else (None, f"{override} not installed")
     if platform == "steam":
         return ("protontricks", "Steam uses protontricks") if _has_tool("protontricks") else (None, "protontricks not installed")
-    if platform == "egs":
-        return ("winetricks", "EGS/Heroic uses winetricks") if _has_tool("winetricks") else (None, "winetricks not installed")
-    if _has_tool("protontricks"):
-        return "protontricks", "RGL uses available protontricks"
     if _has_tool("winetricks"):
-        return "winetricks", "RGL fallback to available winetricks"
+        reason = "EGS/Heroic uses winetricks" if platform == "egs" else "Non-Steam platform uses winetricks"
+        return "winetricks", reason
+    if _has_tool("protontricks"):
+        return "protontricks", "winetricks not installed; falling back to protontricks"
     return None, "neither protontricks nor winetricks is installed"
 
 

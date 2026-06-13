@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ..core.config import RunnerConfig
 from ..core.errors import RunnerError
-from .tricks import _gui_args, _sanitize_fontconfig_env
+from .tricks import _gui_args, _sanitize_fontconfig_env, select_tricks_tool
 
 EMOJI_FONT_FILENAME = "seguiemj.ttf"
 FONT_MAGIC_HEADERS = (b"\x00\x01\x00\x00", b"OTTO", b"ttcf")
@@ -34,7 +34,7 @@ class EmojiFontStatus:
         return _is_valid_font_file(self.prefix_font) and _is_valid_font_file(self.system_font) and self.marker.exists() and self.registry_applied
 
 
-def apply_emoji_font_fix(config: RunnerConfig, compatdata: Path, *, dry_run: bool, logger: logging.Logger | None = None) -> None:
+def apply_emoji_font_fix(config: RunnerConfig, compatdata: Path, platform: str, *, dry_run: bool, logger: logging.Logger | None = None) -> None:
     prefix = compatdata / "pfx"
     prefix_font = prefix / "drive_c" / "windows" / "Fonts" / EMOJI_FONT_FILENAME
     system_font = Path.home() / ".local" / "share" / "fonts" / EMOJI_FONT_FILENAME
@@ -45,7 +45,7 @@ def apply_emoji_font_fix(config: RunnerConfig, compatdata: Path, *, dry_run: boo
         return
     app_id = config.app_id if config.app_id and config.app_id != "0" else "271590"
     _install_font_file(config.emoji_font_url, prefix_font, system_font, dry_run=dry_run, logger=logger)
-    _install_corefonts(app_id, config, dry_run=dry_run, logger=logger)
+    _install_corefonts(app_id, config, compatdata, platform, dry_run=dry_run, logger=logger)
     _write_font_registry(prefix, dry_run=dry_run, logger=logger)
     if not dry_run:
         marker.write_text("ok\n", encoding="utf-8")
@@ -106,25 +106,30 @@ def _is_valid_font_file(path: Path) -> bool:
     return header in FONT_MAGIC_HEADERS
 
 
-def _install_corefonts(app_id: str, config: RunnerConfig, *, dry_run: bool, logger: logging.Logger | None) -> None:
-    protontricks = shutil.which("protontricks")
-    if protontricks is None:
+def _install_corefonts(app_id: str, config: RunnerConfig, compatdata: Path, platform: str, *, dry_run: bool, logger: logging.Logger | None) -> None:
+    tool, reason = select_tricks_tool(platform, config.tricks_tool)
+    if tool is None:
         if logger:
-            logger.warning("protontricks is not installed; skipping optional corefonts install")
+            logger.warning("Skipping optional corefonts install: %s", reason)
         return
-    _run_protontricks([protontricks, *_gui_args(config), app_id, "corefonts"], config.tricks_timeout, dry_run=dry_run, logger=logger, description="Installing corefonts")
+    env = os.environ.copy()
+    _sanitize_fontconfig_env(env)
+    if tool == "protontricks":
+        argv = ["protontricks", *_gui_args(config), app_id, "corefonts"]
+    else:
+        env["WINEPREFIX"] = str(compatdata / "pfx")
+        argv = ["winetricks", *_gui_args(config), "-q", "corefonts"]
+    _run_optional_tricks(argv, config.tricks_timeout, env, dry_run=dry_run, logger=logger, description="Installing corefonts")
 
 
-def _run_protontricks(argv: list[str], timeout: int, *, dry_run: bool, logger: logging.Logger | None, description: str) -> None:
+def _run_optional_tricks(argv: list[str], timeout: int, env: dict[str, str], *, dry_run: bool, logger: logging.Logger | None, description: str) -> None:
     if logger:
         logger.info("%s via %s", description, " ".join(argv))
     if dry_run:
         return
-    env = os.environ.copy()
-    _sanitize_fontconfig_env(env)
     result = subprocess.run(argv, env=env, timeout=timeout if timeout > 0 else None, check=False)
-    if result.returncode != 0:
-        raise RunnerError(f"{argv[0]} exited with code {result.returncode} while {description.lower()}")
+    if result.returncode != 0 and logger:
+        logger.warning("%s exited with code %s while %s; continuing", argv[0], result.returncode, description.lower())
 
 
 def _write_font_registry(prefix: Path, *, dry_run: bool, logger: logging.Logger | None) -> None:

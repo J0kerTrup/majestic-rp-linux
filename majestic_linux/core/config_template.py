@@ -35,7 +35,7 @@ MAJESTIC_INSTALLER_PATH=
 MAJESTIC_INSTALLER_ARGS=
 MAJESTIC_INSTALLER_TIMEOUT=30
 
-# Steam -> protontricks, EGS/Heroic -> winetricks, RGL -> whichever exists.
+# Steam -> protontricks. Non-Steam platforms prefer winetricks.
 PROTONTRICKS_WIN10=1
 TRICKS_POWERSHELL=1
 PROTONTRICKS_TIMEOUT=0

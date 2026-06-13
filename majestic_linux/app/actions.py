@@ -14,7 +14,6 @@ from ..runtime.fixups import prepare_proton_runtime_fixups
 from ..runtime.launcher import install_majestic_launcher
 from ..runtime.multiplayer_repair import latest_repair_time, repair_gta_conflicts, repair_multiplayer_cache
 from ..runtime.proton import build_proton_command, run_proton_managed
-from ..runtime.registry import apply_wine_registry_fixups
 from ..runtime.tricks import apply_powershell, apply_win10_mode, powershell_setup_is_complete
 from ..runtime.win_blocker import configure_win_blocker_sidecar, stop_win_blocker
 from ..runtime.wine import ensure_egs_launcher_symlink, prepare_optional_storage_drive, prepare_wine_mapping
@@ -88,8 +87,7 @@ def _prepare_prefix_and_launcher(context, logger, *, force: bool = False) -> Non
         ensure_egs_launcher_symlink(result.gta_path, dry_run=config.dry_run, logger=logger)
     apply_win10_mode(config, result.selected_platform, result.compatdata_path, dry_run=config.dry_run, logger=logger)
     apply_powershell(config, result.selected_platform, result.compatdata_path, dry_run=config.dry_run, logger=logger)
-    apply_wine_registry_fixups(config, result.compatdata_path, dry_run=config.dry_run, logger=logger)
-    apply_emoji_font_fix(config, result.compatdata_path, dry_run=config.dry_run, logger=logger)
+    apply_emoji_font_fix(config, result.compatdata_path, result.selected_platform, dry_run=config.dry_run, logger=logger)
     report = patch_js_tree(_patch_root(config, result), dry_run=config.dry_run, logger=logger, permissions=config.majestic_permissions)
     if not config.dry_run:
         marker = _setup_marker(result.compatdata_path)
