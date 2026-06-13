@@ -6,6 +6,7 @@ import logging
 from ..core.config import RunnerConfig
 from .paths import (
     DetectionResult,
+    detect_all,
     detect_gta_platform,
     find_compatdata,
     find_gta_path,
@@ -20,6 +21,8 @@ async def detect_all_async(config: RunnerConfig, logger: logging.Logger | None =
     """Detect independent paths concurrently while preserving dependencies."""
     if logger:
         logger.debug("Starting async path detection")
+    if not config.auto_detect:
+        return detect_all(config, logger)
     steam_root = await asyncio.to_thread(find_steam_root, config)
     compat_task = asyncio.to_thread(find_compatdata, config, steam_root)
     gta_task = asyncio.to_thread(find_gta_path, config, steam_root)

@@ -7,7 +7,7 @@ from pathlib import Path
 from .errors import ConfigError
 from .keys import CONFIG_KEYS
 
-SECTION_PREFIXES = {"shutdown": "SHUTDOWN_", "radio": "RADIO_"}
+SECTION_PREFIXES = {"shutdown": "SHUTDOWN_", "repair": "REPAIR_"}
 
 
 def parse_bool(value: str | None, default: bool = False) -> bool:

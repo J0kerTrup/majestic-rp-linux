@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -9,13 +10,16 @@ from pathlib import Path
 from ..core.config import load_config
 from ..core.config_file import ensure_config_file
 from ..core.logger import setup_logging
+from ..discord.bridge import configure_discord_bridge_environment
 from ..discord.bridge import discord_ipc_sockets, find_discord_bridge
 from ..patching.patcher import patch_state
 from ..runtime.assets import inspect_launcher_assets
+from ..runtime.fonts import emoji_font_status
 from ..runtime.fixups import prepare_proton_runtime_fixups
 from ..runtime.launcher import installer_target
 from ..runtime.lifecycle import prefix_processes
 from ..runtime.proton import build_proton_command
+from ..runtime.multiplayer_repair import MAJESTIC_GTA_ROOT_FILES, analyze_multiplayer_logs, latest_repair_time, multiplayer_roaming_paths
 from ..runtime.tricks import build_win10_plan
 from ..runtime.wine import prepare_wine_mapping
 from .context import load_context, print_detection
@@ -50,12 +54,114 @@ def cmd_env(args: argparse.Namespace) -> int:
     command = build_proton_command(
         config, result.proton_path, result.compatdata_path, result.steam_root, result.majestic_exe, result.selected_platform, mapping
     )
+    configure_discord_bridge_environment(
+        config,
+        compatdata=result.compatdata_path,
+        proton_path=result.proton_path,
+        steam_root=result.steam_root,
+        app_id=config.app_id,
+        env=command.env,
+    )
     print("Command:")
     print(" ".join(command.argv))
     print("\nEnvironment:")
-    for key in sorted(k for k in command.env if k.startswith(("STEAM_", "MAJESTIC_", "GAME_", "DISABLE_", "GST_")) or k in {"LANG", "LC_ALL", "LC_CTYPE", "LD_LIBRARY_PATH", "WINEDLLOVERRIDES"}):
+    for key in sorted(k for k in command.env if k.startswith(("STEAM_", "MAJESTIC_", "GAME_", "DISABLE_", "GST_", "PRESSURE_VESSEL_")) or k in {"LANG", "LC_ALL", "LC_CTYPE", "LD_LIBRARY_PATH", "WINEDLLOVERRIDES", "PROTON_REMOTE_DEBUG_CMD"}):
         print(f"{key}={command.env[key]}")
     return 0
+
+
+def cmd_analyze_crash(args: argparse.Namespace) -> int:
+    context, _logger = load_context(args)
+    result = context.result
+    if result.compatdata_path is None:
+        print("Compatdata prefix was not found.")
+        return 1
+    paths = multiplayer_roaming_paths(result.compatdata_path)
+    rockstar_exit = _latest_rockstar_exit(result.compatdata_path)
+    if rockstar_exit:
+        print(f"Rockstar exit:       {rockstar_exit}")
+    if not paths:
+        if latest_repair_time(result.compatdata_path, result.gta_path) is not None:
+            print("Majestic Multiplayer directory is currently archived by repair.")
+            print("Recommendation: run the game again so Majestic redownloads Multiplayer, then analyze-crash can inspect the next log.")
+            return 0
+        print("Majestic Multiplayer directory was not found.")
+        return 1
+    exit_code = 0
+    for path in paths:
+        repair_time = latest_repair_time(result.compatdata_path, result.gta_path)
+        report = analyze_multiplayer_logs(path, min_mtime=repair_time)
+        stale_logs = _stale_logs(path, repair_time)
+        no_post_repair_logs = repair_time is not None and not report.analyzed_logs
+        print(f"Multiplayer: {path}")
+        print(f"Analyzed logs:        {len(report.analyzed_logs)}")
+        for log in report.analyzed_logs:
+            print(f"  {log}")
+        if stale_logs:
+            print(f"Ignored pre-repair:   {len(stale_logs)}")
+        if no_post_repair_logs:
+            print("Status:               no newer post-repair crash log found")
+        print(f"Wheel drawable:       {report.invalid_wheel_errors}")
+        print(f"Wheel mod slot 48:    {report.mod_slot_48_errors}")
+        print(f"Datafile missing:     {report.datafile_errors}")
+        print(f"Category asset errs:  {report.category_asset_errors}")
+        print(f"Duplicate weapons:    {report.duplicate_weapon_errors}")
+        if report.model_hashes:
+            print(f"Model hashes:         {report.model_hashes}")
+        if report.missing_dlc:
+            print(f"Missing DLC refs:     {report.missing_dlc}")
+        if report.skipped_gen9_dlc:
+            print(f"Skipped Gen9 DLC:     {', '.join(report.skipped_gen9_dlc)}")
+        if no_post_repair_logs:
+            print("Recommendation: run the game again; analyze-crash will inspect the next new client log.")
+            continue
+        if report.invalid_wheel_errors:
+            print("Recommendation: run patch --repair-multiplayer-cache to redownload Multiplayer.")
+            exit_code = 1
+        if report.datafile_errors or report.category_asset_errors or report.duplicate_weapon_errors or report.skipped_gen9_dlc:
+            if result.gta_path and _has_active_gta_repair_candidates(result.gta_path):
+                print("Recommendation: run patch to archive stale GTA injected files and Gen9 DLC backups.")
+            else:
+                print("Recommendation: no local GTA repair candidates remain; these datafile/DLC messages are likely server/resource-side.")
+            exit_code = 1
+        if rockstar_exit and exit_code == 0:
+            print("Recommendation: fatal GTA exit detected, but no known local repair signature was found.")
+            exit_code = 1
+    return exit_code
+
+
+def _latest_mtime(paths: tuple[Path, ...]) -> float | None:
+    times = [path.stat().st_mtime for path in paths if path.exists()]
+    return max(times) if times else None
+
+
+def _stale_logs(multiplayer_path: Path, repair_time: float | None) -> list[Path]:
+    if repair_time is None:
+        return []
+    logs_dir = multiplayer_path / "logs"
+    if not logs_dir.exists():
+        return []
+    return [path for path in logs_dir.glob("client_*.log") if path.stat().st_mtime <= repair_time]
+
+
+def _has_active_gta_repair_candidates(gta_path: Path) -> bool:
+    if any((gta_path / name).exists() for name in MAJESTIC_GTA_ROOT_FILES):
+        return True
+    dlcpacks = gta_path / "update" / "x64" / "dlcpacks"
+    return any(path.is_dir() and "g9ec" in path.name.lower() for path in dlcpacks.glob("*")) if dlcpacks.exists() else False
+
+
+def _latest_rockstar_exit(compatdata: Path) -> str:
+    launcher_log = compatdata / "pfx" / "drive_c" / "users" / "steamuser" / "Documents" / "Rockstar Games" / "Launcher" / "launcher.log"
+    if not launcher_log.exists():
+        return ""
+    pattern = re.compile(r"(\[[^\]]+\]).*Game exited with code ([^ ]+)")
+    latest = ""
+    for line in launcher_log.read_text(encoding="utf-8", errors="ignore").splitlines():
+        match = pattern.search(line)
+        if match:
+            latest = f"{match.group(1)} code {match.group(2)}"
+    return latest
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -65,8 +171,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"Python:            {sys.version.split()[0]}")
     print_detection(result)
     print(f"Wine drive:        {config.gta_wine_drive.upper()}:")
-    print(f"Locale/Input:      {config.locale} / {config.input_method}")
-    print(f"XKB layout:        {config.xkb_layout or '-'} ({config.xkb_options or 'no options'})")
     if result.compatdata_path:
         plan = build_win10_plan(config, result.selected_platform, result.compatdata_path)
         print(f"Tricks tool:       {plan.tool or '-'} ({plan.reason})")
@@ -80,6 +184,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"Prefix processes:  {len(processes)}")
         for process in processes[:8]:
             print(f"  pid={process.pid} name={process.name}")
+        _print_emoji_font_status(result.compatdata_path)
     if result.proton_path:
         print(f"Proton executable: {'yes' if result.proton_path.is_file() else 'no'}")
     if result.gta_path:
@@ -90,7 +195,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"JS patch state:    {patch_state(patch_root)}")
         _print_asset_report(inspect_launcher_assets(patch_root, logger))
     print(f"Shutdown cleanup:  {'enabled' if config.kill_wine_on_exit else 'disabled'}")
-    print(f"Xalia warning:     {'ignored on shutdown' if config.ignore_xalia_task_cancelled else 'not ignored'}")
     problems = _doctor_problems(config, result)
     if problems:
         print("\nProblems:")
@@ -145,3 +249,13 @@ def _print_asset_report(report) -> None:
         print(f"    missing: {item}")
     for warning in report.warnings:
         print(f"  recommendation: {warning}")
+
+
+def _print_emoji_font_status(compatdata: Path) -> None:
+    status = emoji_font_status(compatdata)
+    print("Emoji font fix:")
+    print(f"  applied:      {'yes' if status.applied else 'no'}")
+    print(f"  prefix font:  {'yes' if status.prefix_font.exists() else 'no'} ({status.prefix_font})")
+    print(f"  system font:  {'yes' if status.system_font.exists() else 'no'} ({status.system_font})")
+    print(f"  marker:       {'yes' if status.marker.exists() else 'no'} ({status.marker})")
+    print(f"  registry:     {'yes' if status.registry_applied else 'no'}")

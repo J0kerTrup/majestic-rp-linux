@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 import os
 import shlex
-from dataclasses import dataclass
+import subprocess
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..core.config import RunnerConfig
 from .fixups import apply_library_path
-from .input import input_env
 from .lifecycle import run_with_lifecycle
 from .wine import WineMapping
 
@@ -18,6 +19,7 @@ class ProtonCommand:
     argv: list[str]
     env: dict[str, str]
     cwd: Path | None = None
+    after_start: list[Callable[[subprocess.Popen], None]] = field(default_factory=list)
 
 
 def build_proton_command(
@@ -29,9 +31,9 @@ def build_proton_command(
     platform: str,
     wine_mapping: WineMapping,
 ) -> ProtonCommand:
-    app_id = "271590" if platform == "steam" else (config.app_id if config.app_id != "271590" else "0")
+    app_id = _steam_app_id(config)
     env = os.environ.copy()
-    env.update(input_env(config))
+    _sanitize_host_launcher_env(env)
     env.update(
         {
             "STEAM_COMPAT_DATA_PATH": str(compatdata),
@@ -62,6 +64,16 @@ def build_proton_command(
     apply_library_path(env, getattr(config, "runtime_library_paths", []))
     argv = [str(proton_path), "waitforexitandrun", str(majestic_exe), *shlex.split(config.launcher_flags)]
     return ProtonCommand(argv, env, majestic_exe.parent)
+
+
+def _steam_app_id(config: RunnerConfig) -> str:
+    return config.app_id if config.app_id and config.app_id != "0" else "271590"
+
+
+def _sanitize_host_launcher_env(env: dict[str, str]) -> None:
+    for key in list(env):
+        if key.startswith(("CODEX_", "VSCODE_", "ELECTRON_")) or key in {"NODE_OPTIONS"}:
+            env.pop(key, None)
 
 
 def run_proton(command: ProtonCommand, *, dry_run: bool = False, logger: logging.Logger | None = None) -> int:

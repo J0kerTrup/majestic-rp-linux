@@ -44,10 +44,10 @@ def build_win10_plan(config: RunnerConfig, platform: str, compatdata: Path) -> T
     _sanitize_fontconfig_env(env)
     if tool == "protontricks":
         app_id = config.app_id if config.app_id and config.app_id != "0" else "271590"
-        return TricksPlan(tool, reason, ["protontricks", app_id, "win10"], env)
+        return TricksPlan(tool, reason, ["protontricks", *_gui_args(config), app_id, "win10"], env)
     if tool == "winetricks":
         env["WINEPREFIX"] = str(compatdata / "pfx")
-        return TricksPlan(tool, reason, ["winetricks", "-q", "win10"], env)
+        return TricksPlan(tool, reason, ["winetricks", *_gui_args(config), "-q", "win10"], env)
     return TricksPlan(None, reason, [], env)
 
 
@@ -105,3 +105,7 @@ def _sanitize_fontconfig_env(env: dict[str, str]) -> None:
     for key in ("FONTCONFIG_FILE", "FONTCONFIG_PATH", "FONTCONFIG_SYSROOT"):
         env.pop(key, None)
     env["FC_FONTATIONS"] = "0"
+
+
+def _gui_args(config: RunnerConfig) -> list[str]:
+    return ["--gui"] if getattr(config, "tricks_gui", False) else []

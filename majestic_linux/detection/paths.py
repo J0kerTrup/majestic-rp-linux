@@ -159,11 +159,24 @@ def looks_like_gta(path: Path | None) -> bool:
 
 
 def detect_all(config: RunnerConfig, logger: logging.Logger | None = None) -> DetectionResult:
+    if not config.auto_detect:
+        return _detect_configured(config, logger)
     steam_root = find_steam_root(config)
     compatdata = find_compatdata(config, steam_root)
     gta_path = find_gta_path(config, steam_root)
     proton_path = find_proton(config, steam_root)
     majestic_exe = find_majestic_exe(config, compatdata)
+    detected = detect_gta_platform(gta_path)
+    selected = select_platform(config.selected_platform, detected, config.platform_explicit, logger)
+    return DetectionResult(steam_root, proton_path, compatdata, gta_path, majestic_exe, detected, selected)
+
+
+def _detect_configured(config: RunnerConfig, logger: logging.Logger | None = None) -> DetectionResult:
+    steam_root = config.steam_root if config.steam_root and config.steam_root.exists() else None
+    compatdata = config.compatdata_path if config.compatdata_path and config.compatdata_path.exists() else None
+    gta_path = config.gta_path if config.gta_path and config.gta_path.exists() else None
+    proton_path = config.proton_path if config.proton_path and config.proton_path.exists() else None
+    majestic_exe = config.majestic_exe if config.majestic_exe and config.majestic_exe.exists() else None
     detected = detect_gta_platform(gta_path)
     selected = select_platform(config.selected_platform, detected, config.platform_explicit, logger)
     return DetectionResult(steam_root, proton_path, compatdata, gta_path, majestic_exe, detected, selected)

@@ -23,6 +23,3 @@ majestic-linux = "majestic_linux.app.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["majestic_linux*"]
-
-[tool.unittest]
-start-dir = "tests"

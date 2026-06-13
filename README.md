@@ -1,29 +1,45 @@
 # Majestic RP Linux Runner
 
-Python 3.14 runner for launching Majestic RP on Linux through Proton. It detects
-Steam, Proton, GTA V, compatdata/prefix, and Majestic Launcher, prepares Wine
-paths, applies Proton-friendly launcher patches, starts Discord RPC bridge when
-configured, and launches Majestic through Proton.
+Python runner for launching Majestic RP on Linux through Proton. It detects
+Steam, Proton, GTA V, compatdata/prefix, and Majestic Launcher, prepares the
+Wine prefix, applies launcher/runtime fixes, starts optional helper executables,
+and then launches Majestic through Proton.
 
 Support Discord: <https://discord.gg/fkNExq39Yg>
 
-## Install & Run
+## Requirements
 
-Make sure there is only English symbols to the script's location!
+- Python 3.14 or newer.
+- Steam GTA V with a Proton prefix, or an explicitly configured Proton/GTA path.
+- `protontricks` or `winetricks` for first-run prefix setup.
+- `asar` for launcher `app.asar` patching.
+- Optional: `xdotool` for Caps Lock cleanup before launch.
+- Optional: `x86_64-w64-mingw32-gcc` only when rebuilding the bundled Win key helper.
+
+Keep the project path ASCII-only. Proton, Wine, and some shell tools still get
+unhappy around non-English project paths.
+
+## Quick Start
 
 ```bash
 python3 --version
 chmod +x install-and-run-majestic-proton.sh
 ./install-and-run-majestic-proton.sh config
 ./install-and-run-majestic-proton.sh doctor
-./install-and-run-majestic-proton.sh patch
+./install-and-run-majestic-proton.sh install
 ./install-and-run-majestic-proton.sh run
 ```
 
-The wrapper is intentionally small and only calls:
+The shell wrapper is intentionally small. It only calls:
 
 ```bash
 python3 -m majestic_linux <command>
+```
+
+You can also run the module directly:
+
+```bash
+python3 -m majestic_linux --config majestic-runner.conf detect
 ```
 
 ## Commands
@@ -32,10 +48,12 @@ python3 -m majestic_linux <command>
 ./install-and-run-majestic-proton.sh run
 ./install-and-run-majestic-proton.sh doctor
 ./install-and-run-majestic-proton.sh doctor-radio
+./install-and-run-majestic-proton.sh analyze-crash
 ./install-and-run-majestic-proton.sh config
 ./install-and-run-majestic-proton.sh detect
 ./install-and-run-majestic-proton.sh env
 ./install-and-run-majestic-proton.sh dry-run
+./install-and-run-majestic-proton.sh install
 ./install-and-run-majestic-proton.sh patch
 ./install-and-run-majestic-proton.sh clean
 ./install-and-run-majestic-proton.sh purge-majestic
@@ -46,15 +64,20 @@ Useful flags:
 ```bash
 ./install-and-run-majestic-proton.sh --debug doctor
 ./install-and-run-majestic-proton.sh --dry-run run
+./install-and-run-majestic-proton.sh run --gui
 ./install-and-run-majestic-proton.sh run --radio-safe
-python3 -m majestic_linux --config majestic-runner.conf detect
+./install-and-run-majestic-proton.sh run --disable-winegstreamer
+./install-and-run-majestic-proton.sh install --gui
+./install-and-run-majestic-proton.sh patch --repair-multiplayer-cache
+./install-and-run-majestic-proton.sh patch --no-repair-multiplayer-cache
+./install-and-run-majestic-proton.sh purge-majestic --include-trash --include-installers
 ```
 
 ## Configuration
 
-The active config is strictly `majestic-runner.conf`. If it is missing, the
-runner creates it automatically with safe defaults. Environment variables
-override values from the file.
+The active config is `majestic-runner.conf`. If it is missing, `config` creates
+it from the built-in template. Environment variables override values from the
+file.
 
 An example lives at:
 
@@ -62,27 +85,60 @@ An example lives at:
 examples/majestic-runner.example.conf
 ```
 
-Important settings:
+Most users should leave paths empty and let auto-detection do the work:
 
-- `MAJESTIC_PLATFORM=auto|steam|rgl|egs`
-- `MAJESTIC_AUTO_DETECT=1`
-- `STEAM_ROOT`
-- `PROTON_PATH`
-- `STEAM_COMPAT_DATA_PATH`
-- `GTA_PATH`
-- `MAJESTIC_EXE`
-- `APP_ID=271590`
-- `GAME_WIDTH`, `GAME_HEIGHT`
-- `GAME_WINDOWED`, `GAME_BORDERLESS`
-- `DISABLE_CEF_GPU`
-- `MAJESTIC_LOG_LEVEL=INFO`
-- `DRY_RUN=0`
+```ini
+MAJESTIC_PLATFORM=auto
+MAJESTIC_AUTO_DETECT=1
+APP_ID=271590
+STEAM_ROOT=
+STEAM_COMPAT_DATA_PATH=
+GTA_PATH=
+PROTON_PATH=
+MAJESTIC_EXE=
+```
 
-Leave paths empty when auto-detection should be used. Set explicit paths only
-when detection finds the wrong Steam library, Proton build, GTA install, or
-launcher.
+Common runtime settings:
 
-Shutdown settings are stored in the same file:
+```ini
+GAME_WIDTH=1920
+GAME_HEIGHT=1080
+GAME_WINDOWED=1
+GAME_BORDERLESS=1
+MAJESTIC_GPU_MODE=auto
+DISABLE_CEF_GPU=1
+GTA_WINE_DRIVE=g
+MAJESTIC_LOG_LEVEL=INFO
+DRY_RUN=0
+```
+
+Prefix setup and installer settings:
+
+```ini
+MAJESTIC_INSTALLER_URL="https://cdn.majestic-files.net/launcher/cis/MajesticLauncherSetup.exe"
+MAJESTIC_INSTALLER_PATH=
+MAJESTIC_INSTALLER_ARGS=
+MAJESTIC_INSTALLER_TIMEOUT=30
+PROTONTRICKS_WIN10=1
+PROTONTRICKS_TIMEOUT=0
+TRICKS_TOOL=auto
+EMOJI_FONT_URL="https://raw.githubusercontent.com/thedemons/merge_color_emoji_font/main/seguiemj.ttf"
+```
+
+Sidecar helpers:
+
+```ini
+DISCORD_BRIDGE_ENABLED=1
+DISCORD_BRIDGE_PATH=
+DISCORD_BRIDGE_URL="https://github.com/0e4ef622/wine-discord-ipc-bridge/releases/download/v0.0.3/winediscordipcbridge.exe"
+
+WIN_BLOCKER_ENABLED=1
+WIN_BLOCKER_PATH=
+WIN_BLOCKER_READY_MARKER="Connection complete!"
+WIN_BLOCKER_READY_DELAY=0
+```
+
+Shutdown and repair settings use INI sections:
 
 ```ini
 [shutdown]
@@ -92,94 +148,141 @@ kill_timeout_seconds=10
 force_kill_timeout_seconds=5
 kill_only_current_prefix=true
 wait_wineserver=true
-ignore_xalia_task_cancelled=true
+
+[repair]
+multiplayer_cache_on_patch=true
+gta_conflicts_on_patch=true
+wheel_error_threshold=25
 ```
 
-G Radio diagnostics are configured in the same `majestic-runner.conf`:
+There is no persistent `[radio]` config anymore. Radio tooling is diagnostic and
+is enabled only by `doctor-radio`, `run --radio-safe`, or
+`run --disable-winegstreamer`.
 
-```ini
-[radio]
-enabled=true
-diagnostics=true
-safe_mode=false
-disable_winegstreamer=false
-collect_logs=true
-analyze_audio_stack=true
-analyze_cef=true
-analyze_codecs=true
-analyze_network_streams=true
-analyze_proton=true
-analyze_wine=true
-```
+## Launch Flow
 
-## Auto-Detect
+`run` does this in order:
 
-Detection is async where it helps startup time: after Steam root is found, the
-runner checks compatdata, GTA V, and Proton in parallel, then searches Majestic
-Launcher inside the detected prefix.
+1. Loads config and applies environment overrides.
+2. Detects Steam root, Proton, GTA V, compatdata, Majestic Launcher, and platform.
+3. Maps the real GTA V directory into the Wine prefix, usually as `G:`.
+4. Runs first-launch setup if the setup marker is missing.
+5. Applies launcher patching and repair checks.
+6. Prepares fonts, registry tweaks, Caps Lock cleanup, and helper sidecars.
+7. Launches Majestic Launcher through Proton.
+8. Cleans only the current prefix on exit.
 
-Platform detection checks GTA V files:
+Detection scans Steam libraries from `libraryfolders.vdf` and common
+Heroic/Epic locations. Platform detection checks GTA files:
 
 - `EOSSDK-Win64-Shipping.dll` -> `egs`
 - `steam_api64.dll` -> `steam`
 - `GTAVLauncher.exe` -> `rgl`
 - fallback -> `rgl`
 
-Heroic/Epic installs are searched in common Heroic locations. Steam libraries
-from `libraryfolders.vdf` are scanned, so GTA V may live outside the default
-Steam directory.
-
 ## Proton, Wine, And Tricks
-
-The runner maps the real GTA V directory to a Wine drive such as `G:` and passes
-that Windows path to Majestic. Paths with spaces and Cyrillic desktop folders
-are handled by launching Proton from the Majestic executable directory.
 
 Win10 compatibility mode is selected by platform:
 
 - Steam uses `protontricks`.
 - EGS/Heroic uses `winetricks`.
-- RGL uses `protontricks` if installed, otherwise `winetricks`.
+- RGL uses `protontricks` if available, otherwise `winetricks`.
 
-Russian input defaults are configured through:
+`install` performs the one-time setup. `patch` forces setup/patching again.
+First `run` also performs setup automatically when the marker is missing. Use
+`--gui` with `run`, `install`, or `patch` when protontricks/winetricks needs GUI
+diagnostics.
+
+The setup path installs Majestic Launcher when missing, prepares the prefix,
+applies Win10/corefonts/emoji font fixes, applies Wine registry tweaks, and
+patches the Majestic launcher JavaScript inside `app.asar` or unpacked app
+files.
+
+The runner launches Proton from the Majestic executable directory. This avoids a
+class of Wine/Proton issues around spaces and non-trivial paths.
+
+## Win Key Blocker
+
+Majestic/GTA has an input bug around the Windows key. The runner ships a small
+Windows helper:
 
 ```text
-MAJESTIC_LOCALE=ru_RU.UTF-8
-MAJESTIC_INPUT_METHOD=xim
-MAJESTIC_XKB_LAYOUT=us,ru
-MAJESTIC_XKB_OPTIONS=grp:alt_shift_toggle
+helpers/win-blocker/block_win.exe
+helpers/win-blocker/block_win.c
 ```
 
-## Shutdown Lifecycle
+At runtime it is copied into the prefix:
 
-The runner launches Proton through a lifecycle manager. On normal exit,
-Launcher close, game close, `SIGINT`, `SIGTERM`, or `SIGHUP`, it tries to clean
-only the current GTA V/Majestic prefix:
+```text
+drive_c/majestic-sidecars/win-blocker/block_win.exe
+```
 
-- wait for the main Proton process;
-- run `wineserver -w` when enabled;
-- run `wineserver -k` for the current `WINEPREFIX`;
-- find remaining `/proc` processes that mention the current prefix/compatdata;
-- send `SIGTERM`, wait, then send `SIGKILL` only to those matching processes.
+The helper is not started with the launcher. The watcher waits until GTA is
+running and the fresh Majestic client log contains:
 
-It intentionally avoids global commands like `pkill wine`, because those can
-kill another game or Wine application.
+```text
+Connection complete!
+```
 
-If `wineserver` remains after exit, run:
+Only then it starts `block_win.exe` through the same Proton prefix. If the
+helper exits while GTA is still running, the watcher starts it again. When GTA
+exits, the watcher stops it with `taskkill` in the same prefix.
+
+Disable or tune it with:
+
+```ini
+WIN_BLOCKER_ENABLED=0
+WIN_BLOCKER_PATH=/path/to/custom/block_win.exe
+WIN_BLOCKER_READY_MARKER="Connection complete!"
+WIN_BLOCKER_READY_DELAY=0
+```
+
+Rebuild the bundled helper with:
 
 ```bash
-./install-and-run-majestic-proton.sh doctor
+x86_64-w64-mingw32-gcc -O2 -mwindows helpers/win-blocker/block_win.c -o helpers/win-blocker/block_win.exe
 ```
 
-Check `Prefix processes:` and confirm the stuck process belongs to the current
-`STEAM_COMPAT_DATA_PATH`.
+## Discord RPC
 
-Xalia messages like `System.Threading.Tasks.TaskCanceledException: A task was
-canceled` during shutdown are treated as known shutdown warnings when
-`ignore_xalia_task_cancelled=true`. They are not hidden as real fatal errors;
-the runner only downgrades that specific Xalia/task-cancel pattern.
+Discord Rich Presence is handled as a Proton remote-debug sidecar. Use the
+stable GitHub release URL, not the temporary `release-assets.githubusercontent`
+redirect:
 
-## Missing Icons
+```ini
+DISCORD_BRIDGE_ENABLED=1
+DISCORD_BRIDGE_URL="https://github.com/0e4ef622/wine-discord-ipc-bridge/releases/download/v0.0.3/winediscordipcbridge.exe"
+```
+
+Or point to a local build:
+
+```ini
+DISCORD_BRIDGE_PATH=/path/to/winediscordipcbridge.exe
+```
+
+Disable it completely with:
+
+```ini
+DISCORD_BRIDGE_ENABLED=0
+```
+
+When configured by URL, the runner downloads the bridge into `cache/`. It also
+adds the bridge and the first detected `discord-ipc-*` socket to
+`PRESSURE_VESSEL_FILESYSTEMS_RW`, matching the behavior of the original bridge
+wrapper script.
+
+## Fonts And Icons
+
+The runner installs only the emoji/icon font it needs by default:
+
+```text
+seguiemj.ttf
+```
+
+It downloads the font from `EMOJI_FONT_URL`, installs it into the GTA V Proton
+prefix, installs it for the current Linux user in `~/.local/share/fonts`,
+refreshes fontconfig when `fc-cache` exists, and writes Wine font registry
+entries directly into the current prefix.
 
 If launcher icons disappear, run:
 
@@ -187,116 +290,106 @@ If launcher icons disappear, run:
 ./install-and-run-majestic-proton.sh doctor
 ```
 
-The doctor now inspects Majestic assets and prints:
+`doctor` checks Majestic assets, font files, icon files, `@font-face` usage,
+broken relative `url(...)` references, JS patch state, and missing launcher
+resources.
 
-- font files such as `.woff`, `.woff2`, `.ttf`, `.otf`;
-- SVG/ICO icon assets;
-- CSS/HTML/JS files containing `@font-face`;
-- broken relative `url(...)` references;
-- recommendations when fonts or icon files are missing.
+## Crash And Repair
 
-Most icon issues come from broken Vite/Electron relative paths, missing
-`app.asar.unpacked` assets, or an incomplete launcher transfer into the Proton
-prefix.
+`patch` analyzes recent Majestic Multiplayer client logs for known crash
+patterns. If the `Invalid vehicle wheel drawable index` pattern crosses the
+configured threshold, it archives the active `Multiplayer` directory to:
 
-## G Radio Troubleshooting
+```text
+Multiplayer.repair-backup-*
+```
 
-If GTA V or Majestic RP crashes while using G Radio, run:
+Majestic then redownloads clean multiplayer files on the next launch.
+
+`analyze-crash` summarizes recent Multiplayer logs and reports:
+
+- wheel drawable crashes;
+- missing GTA datafile/DLC references;
+- duplicate weapon metadata;
+- Gen9/Enhanced `_g9ec` DLC folders seen by the client.
+
+When GTA datafile conflicts are detected, `patch` can archive stale
+Majestic-injected files from the GTA root and move `_g9ec` DLC folders to
+`*.repair-backup-*` so the next launch starts from a cleaner Legacy layout.
+
+## Debug Logs
+
+Every `run` creates an isolated log directory:
+
+```text
+logs/YYYY-MM-DD_HH-MM-SS/
+```
+
+The runner writes launch output and diagnostics into files such as:
+
+```text
+steam.log
+proton.log
+wine.log
+launcher.log
+game.log
+system.log
+journal.log
+dxvk.log
+vulkan.log
+system-info.log
+processes.log
+crash.log
+```
+
+Proton is launched with `PROTON_LOG=1`, DXVK with `DXVK_LOG_LEVEL=info`, and
+Wine with `WINEDEBUG=+timestamp,+seh,+pid`. Missing utilities like `vulkaninfo`,
+`glxinfo`, or `nvidia-smi` are recorded in logs instead of stopping the launch.
+
+After exit, the runner copies `steam-271590.log` when Proton creates it, writes
+post-run process/journal diagnostics, archives the session to:
+
+```text
+logs/YYYY-MM-DD_HH-MM-SS.tar.gz
+```
+
+Only the newest 30 log sessions are kept.
+
+## G Radio Diagnostics
+
+Radio tooling is diagnostic. It does not install packages, does not run
+winetricks, does not modify the prefix, and does not kill processes.
 
 ```bash
 ./install-and-run-majestic-proton.sh doctor-radio
 ```
 
-The command does not install packages, does not run winetricks, does not change
-Wine/Proton prefixes, and does not kill processes. It only analyzes and writes a
-report to:
+The report is written to:
 
 ```text
 ~/.local/share/majestic-runner/reports/
 ```
 
-The report includes:
-
-- `/etc/os-release`, kernel, Python;
-- PipeWire, PulseAudio, ALSA state;
-- Wine, wine64, wineserver versions;
-- current `WINEPREFIX` and `STEAM_COMPAT_DATA_PATH`;
-- Proton kind, path, version and relevant env;
-- DLL override mentions for `winegstreamer`, `xaudio`, `xact`, `mfplat`, `quartz`;
-- GStreamer tools, plugin visibility, 32-bit/64-bit library hints;
-- Proton-bundled GStreamer plugin dependency checks such as `libgstlibav.so`;
-- recent GTA/Majestic/launcher logs;
-- detected radio/audio/CEF/GStreamer/Media Foundation crash keywords;
-- ranked possible causes with confidence and evidence.
-
-For a safer diagnostic launch:
+For a diagnostic launch:
 
 ```bash
 ./install-and-run-majestic-proton.sh run --radio-safe
 ```
 
-This enables extra Proton/Wine/GStreamer logging and writes a radio report before
-launch. It still avoids risky automatic fixes. Attach the generated
-`radio-report-*.txt` when opening a bug report.
+This writes a radio report before launch and enables extra Proton/Wine/GStreamer
+logging for that run.
 
-During normal runs the runner also captures Proton stdout/stderr into:
-
-```text
-logs/proton-run-latest.log
-logs/proton-run-YYYYMMDD-HHMMSS.log
-```
-
-If logs contain a line like:
-
-```text
-Failed to load plugin ... libgstlibav.so: libbz2.so.1.0: cannot open shared object file
-```
-
-then `doctor-radio` should report `Proton GStreamer dependency failure`. The
-runner prepares safe local compatibility aliases in `cache/proton-libs/` and
-prepends them through `LD_LIBRARY_PATH`; it does not modify Proton or system
-libraries.
-
-Do not point Proton at host GStreamer plugin directories such as
-`/usr/lib64/gstreamer-1.0`: host plugins can fail with `undefined symbol` when
-loaded by Proton's bundled GStreamer core. If Proton's bundled `libgstlibav.so`
-reports missing FFmpeg ABI libraries such as `libavcodec.so.58`,
-`libavformat.so.58`, `libavfilter.so.7`, or `libavutil.so.56`, test a Proton/GE
-build that bundles matching libav libraries or install distribution
-compatibility packages that provide those exact ABI versions.
-
-As a last-resort test you can cut Wine GStreamer out of the current launch:
+As a last-resort one-run test:
 
 ```bash
 ./install-and-run-majestic-proton.sh run --disable-winegstreamer
 ```
 
-or persist it in `majestic-runner.conf`:
-
-```ini
-[radio]
-disable_winegstreamer=true
-```
-
-This sets `WINEDLLOVERRIDES=winegstreamer=d`. It does not delete files or modify
-the prefix, but media/radio playback may stop working if the launcher/game
-strictly requires Wine GStreamer.
-
-## Discord RPC
-
-Discord Rich Presence can use `winediscordipcbridge.exe` or a compatible native
-bridge. Put the bridge next to the runner, in `cache/`, in the prefix `drive_c`,
-or configure:
-
-```text
-DISCORD_BRIDGE_PATH=
-DISCORD_BRIDGE_URL=
-DISCORD_BRIDGE_START_DELAY=2
-```
+This sets `WINEDLLOVERRIDES=winegstreamer=d`. It does not delete files or
+change the prefix, but media/radio playback may stop working if the game or
+launcher requires Wine GStreamer.
 
 ## Diagnostics
-
-Run:
 
 ```bash
 ./install-and-run-majestic-proton.sh doctor
@@ -305,37 +398,45 @@ Run:
 
 `doctor` prints OS, Python, Steam root, Proton, compatdata, GTA V, Majestic
 Launcher, selected platform, tricks tool, Discord bridge, required GTA files,
-JS patch state, icon/font assets, current-prefix Wine processes, shutdown
-settings, and concrete problems to fix.
+JS patch state, icon/font assets, Wine processes for the current prefix,
+shutdown settings, and concrete problems to fix.
 
-`env` prints the Proton command and the important environment variables without
+`env` prints the Proton command and important environment variables without
 launching the game.
 
 ## Cleanup
 
 ```bash
 ./install-and-run-majestic-proton.sh purge-majestic
+./install-and-run-majestic-proton.sh purge-majestic --include-trash --include-installers
+./install-and-run-majestic-proton.sh purge-majestic --include-projects
 ```
 
-This removes Majestic Launcher install/cache/shortcut data from the prefix after
-confirmation. The GTA V installation path is protected and is not removed.
+`purge-majestic` replaces the old shell uninstaller. It removes detected
+Majestic Launcher install/cache/shortcut data from Proton prefixes and native
+Linux Majestic cache/config directories after confirmation.
 
-## Development
+Protected paths are not removed: GTA V installation, Steam roots, home
+directory, and the current project directory.
 
-```bash
-./scripts/check.sh
+Optional cleanup flags:
+
+```text
+--include-trash       also remove Majestic entries from ~/.local/share/Trash
+--include-installers  also remove Majestic installer files from home/download folders
+--include-projects    also remove local majestic-rp-linux project copies/zips
 ```
 
-Architecture:
+## Project Layout
 
 ```text
 majestic_linux/app/        CLI commands and command context
 majestic_linux/core/       config, config template, logging, errors
 majestic_linux/detection/  async path detection and platform detection
-majestic_linux/runtime/    Wine, Proton, tricks, input, installer launch
+majestic_linux/runtime/    Proton, Wine, lifecycle, sidecars, fonts, cleanup
 majestic_linux/patching/   app.asar and JS patching
 majestic_linux/discord/    Discord RPC bridge support
-tests/                     unittest tests
+majestic_linux/radio/      read-only radio diagnostics
+helpers/                   bundled helper sources and binaries
 examples/                  example config
-scripts/                   development helpers
 ```

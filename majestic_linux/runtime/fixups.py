@@ -43,7 +43,8 @@ def _prepare_libbz2_aliases(*, dry_run: bool, logger: logging.Logger | None) -> 
         root = (Path.cwd() / "cache" / "proton-libs" / arch).resolve()
         target = root / "libbz2.so.1.0"
         roots.append(root)
-        if logger:
+        needs_update = dry_run or not (target.exists() or target.is_symlink()) or target.resolve() != source.resolve()
+        if logger and needs_update:
             logger.info("Preparing Proton lib alias %s -> %s", target, source)
         if dry_run:
             continue
