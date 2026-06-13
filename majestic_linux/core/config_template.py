@@ -14,6 +14,7 @@ MAJESTIC_GPU_DEVICE_NAME=
 
 # Proton/Electron launcher flags.
 DISABLE_CEF_GPU=1
+MAJESTIC_LAUNCH_OPTIONS=
 MAJESTIC_LAUNCHER_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu-sandbox --disable-gpu --disable-gpu-compositing --disable-direct-composition --disable-features=DirectComposition,CalculateNativeWinOcclusion"
 
 # auto, steam, rgl, egs. Keep auto unless you need to force one platform.
@@ -46,12 +47,6 @@ EMOJI_FONT_URL="https://raw.githubusercontent.com/thedemons/merge_color_emoji_fo
 DISCORD_BRIDGE_ENABLED=1
 DISCORD_BRIDGE_PATH=
 DISCORD_BRIDGE_URL="https://github.com/0e4ef622/wine-discord-ipc-bridge/releases/download/v0.0.3/winediscordipcbridge.exe"
-
-# Bundled helper that blocks left/right Win keys inside Wine.
-WIN_BLOCKER_ENABLED=1
-WIN_BLOCKER_PATH=
-WIN_BLOCKER_READY_MARKER="Connection complete!"
-WIN_BLOCKER_READY_DELAY=0
 
 # Optional manual paths. Leave empty for auto-detection.
 APP_ID=271590

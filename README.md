@@ -2,8 +2,8 @@
 
 Python runner for launching Majestic RP on Linux through Proton. It detects
 Steam, Proton, GTA V, compatdata/prefix, and Majestic Launcher, prepares the
-Wine prefix, applies launcher/runtime fixes, starts optional helper executables,
-and then launches Majestic through Proton.
+Wine prefix, applies launcher/runtime fixes, configures optional sidecars, and
+then launches Majestic through Proton.
 
 Support Discord: <https://discord.gg/fkNExq39Yg>
 
@@ -14,7 +14,6 @@ Support Discord: <https://discord.gg/fkNExq39Yg>
 - `protontricks` or `winetricks` for first-run prefix setup.
 - `asar` for launcher `app.asar` patching.
 - Optional: `xdotool` for Caps Lock cleanup before launch.
-- Optional: `x86_64-w64-mingw32-gcc` only when rebuilding the bundled Win key helper.
 
 Keep the project path ASCII-only. Proton, Wine, and some shell tools still get
 unhappy around non-English project paths.
@@ -107,6 +106,7 @@ GAME_WINDOWED=1
 GAME_BORDERLESS=1
 MAJESTIC_GPU_MODE=auto
 DISABLE_CEF_GPU=1
+MAJESTIC_LAUNCH_OPTIONS=
 GTA_WINE_DRIVE=g
 MAJESTIC_STORAGE_PATH=
 MAJESTIC_STORAGE_WINE_DRIVE=m
@@ -134,11 +134,6 @@ Sidecar helpers:
 DISCORD_BRIDGE_ENABLED=1
 DISCORD_BRIDGE_PATH=
 DISCORD_BRIDGE_URL="https://github.com/0e4ef622/wine-discord-ipc-bridge/releases/download/v0.0.3/winediscordipcbridge.exe"
-
-WIN_BLOCKER_ENABLED=1
-WIN_BLOCKER_PATH=
-WIN_BLOCKER_READY_MARKER="Connection complete!"
-WIN_BLOCKER_READY_DELAY=0
 ```
 
 Shutdown and repair settings use INI sections:
@@ -210,6 +205,24 @@ then use its PowerShell fallback to read mounted drives inside the Wine prefix.
 The runner launches Proton from the Majestic executable directory. This avoids a
 class of Wine/Proton issues around spaces and non-trivial paths.
 
+## Launch Options
+
+`MAJESTIC_LAUNCH_OPTIONS` uses Steam-like `%command%` syntax. The runner builds
+the real Proton command first, then replaces `%command%` with it.
+
+Examples:
+
+```ini
+MAJESTIC_LAUNCH_OPTIONS="gamescope -W 1920 -H 1080 -r 144 -f -- %command%"
+MAJESTIC_LAUNCH_OPTIONS="mangohud %command%"
+MAJESTIC_LAUNCH_OPTIONS="gamemoderun mangohud %command%"
+MAJESTIC_LAUNCH_OPTIONS="MANGOHUD=1 DXVK_HUD=fps %command%"
+```
+
+Environment assignments before `%command%` are applied to the launch
+environment. If `%command%` is omitted, the runner appends the Proton command to
+the end of the option list.
+
 ## Custom Storage Drive
 
 Majestic Launcher can install its multiplayer files to any visible Windows
@@ -231,47 +244,20 @@ drive letter. The runner creates the host folder when missing and keeps the
 mapping updated on every launch. Leave `MAJESTIC_STORAGE_PATH` empty to disable
 this extra drive. Do not use the same letter as `GTA_WINE_DRIVE`.
 
-## Win Key Blocker
+## Troubleshooting
 
-Majestic/GTA has an input bug around the Windows key. The runner ships a small
-Windows helper:
+### Random actions when pressing Win
 
-```text
-helpers/win-blocker/block_win.exe
-helpers/win-blocker/block_win.c
-```
-
-At runtime it is copied into the prefix:
+If pressing the Windows key causes random actions, broken input, or weird
+keyboard behavior in game, disable Rockstar Games Launcher's own Win key
+blocking option:
 
 ```text
-drive_c/majestic-sidecars/win-blocker/block_win.exe
+Rockstar Games Launcher -> Settings -> Block Win Key -> Off
 ```
 
-The helper is not started with the launcher. The watcher waits until GTA is
-running and the fresh Majestic client log contains:
-
-```text
-Connection complete!
-```
-
-Only then it starts `block_win.exe` through the same Proton prefix. If the
-helper exits while GTA is still running, the watcher starts it again. When GTA
-exits, the watcher stops it with `taskkill` in the same prefix.
-
-Disable or tune it with:
-
-```ini
-WIN_BLOCKER_ENABLED=0
-WIN_BLOCKER_PATH=/path/to/custom/block_win.exe
-WIN_BLOCKER_READY_MARKER="Connection complete!"
-WIN_BLOCKER_READY_DELAY=0
-```
-
-Rebuild the bundled helper with:
-
-```bash
-x86_64-w64-mingw32-gcc -O2 -mwindows helpers/win-blocker/block_win.c -o helpers/win-blocker/block_win.exe
-```
+After changing the option, close Rockstar Games Launcher completely and start
+the runner again.
 
 ## Discord RPC
 

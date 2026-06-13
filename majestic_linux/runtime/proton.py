@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import subprocess
 from collections.abc import Callable
@@ -64,6 +65,7 @@ def build_proton_command(
         env["WINEDLLOVERRIDES"] = _with_dll_override(env.get("WINEDLLOVERRIDES", ""), "winegstreamer=d")
     apply_library_path(env, getattr(config, "runtime_library_paths", []))
     argv = [str(proton_path), "waitforexitandrun", str(majestic_exe), *shlex.split(config.launcher_flags)]
+    argv = apply_launch_options(argv, env, config.launch_options)
     return ProtonCommand(argv, env, majestic_exe.parent)
 
 
@@ -75,6 +77,31 @@ def _sanitize_host_launcher_env(env: dict[str, str]) -> None:
     for key in list(env):
         if key.startswith(("CODEX_", "VSCODE_", "ELECTRON_")) or key in {"NODE_OPTIONS", "SteamAppId", "SteamGameId"}:
             env.pop(key, None)
+
+
+def apply_launch_options(command: list[str], env: dict[str, str], launch_options: str) -> list[str]:
+    options = shlex.split(launch_options or "")
+    if not options:
+        return command
+    result: list[str] = []
+    command_inserted = False
+    for item in options:
+        if item == "%command%":
+            result.extend(command)
+            command_inserted = True
+            continue
+        if not command_inserted and _looks_like_env_assignment(item):
+            key, value = item.split("=", 1)
+            env[key] = value
+            continue
+        result.append(item)
+    if not command_inserted:
+        result.extend(command)
+    return result
+
+
+def _looks_like_env_assignment(value: str) -> bool:
+    return re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", value) is not None
 
 
 def run_proton(command: ProtonCommand, *, dry_run: bool = False, logger: logging.Logger | None = None) -> int:

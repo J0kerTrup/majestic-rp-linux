@@ -15,7 +15,6 @@ from ..runtime.launcher import install_majestic_launcher
 from ..runtime.multiplayer_repair import latest_repair_time, repair_gta_conflicts, repair_multiplayer_cache
 from ..runtime.proton import build_proton_command, run_proton_managed
 from ..runtime.tricks import apply_powershell, apply_win10_mode, powershell_setup_is_complete
-from ..runtime.win_blocker import configure_win_blocker_sidecar, stop_win_blocker
 from ..runtime.wine import ensure_egs_launcher_symlink, prepare_optional_storage_drive, prepare_wine_mapping
 from ..radio.doctor import build_radio_report, radio_safe_env
 from .context import load_context
@@ -236,14 +235,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         env=command.env,
         logger=logger,
     )
-    win_blocker = configure_win_blocker_sidecar(
-        config,
-        command,
-        compatdata=result.compatdata_path,
-        proton_path=result.proton_path,
-        steam_root=result.steam_root,
-        logger=logger,
-    )
     if getattr(args, "radio_safe", False):
         logger.info("G Radio safe mode enabled: collecting report and enabling extra Proton/Wine logs")
         report = build_radio_report(config, result, dry_run=config.dry_run)
@@ -252,12 +243,4 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         return run_proton_managed(command, config, result.compatdata_path, dry_run=config.dry_run, logger=logger)
     finally:
-        stop_win_blocker(
-            win_blocker,
-            compatdata=result.compatdata_path,
-            proton_path=result.proton_path,
-            steam_root=result.steam_root,
-            app_id=config.app_id,
-            logger=logger,
-        )
         stop_discord_bridge(discord, compatdata=result.compatdata_path, proton_path=result.proton_path, app_id=config.app_id, logger=logger)

@@ -23,7 +23,7 @@ from .debug_logs import (
     write_crash_log,
 )
 
-WATCH_NAMES = ("wine", "wine64", "wineserver", "proton", "Xalia", "Launcher.exe", "GTA5.exe", "PlayGTAV.exe", "GTAVLauncher.exe", "RockstarService.exe", "block_win.exe")
+WATCH_NAMES = ("wine", "wine64", "wineserver", "proton", "Xalia", "Launcher.exe", "GTA5.exe", "PlayGTAV.exe", "GTAVLauncher.exe", "RockstarService.exe")
 
 
 @dataclass(slots=True)

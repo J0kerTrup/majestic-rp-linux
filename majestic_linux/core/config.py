@@ -19,6 +19,7 @@ class RunnerConfig:
     gpu_mode: str = "auto"
     gpu_device_name: str = ""
     disable_cef_gpu: bool = True
+    launch_options: str = ""
     launcher_flags: str = "--no-sandbox --disable-dev-shm-usage --disable-gpu-sandbox --disable-gpu --disable-gpu-compositing --disable-direct-composition --disable-features=DirectComposition,CalculateNativeWinOcclusion"
     selected_platform: str = "auto"
     platform_explicit: bool = False
@@ -46,10 +47,6 @@ class RunnerConfig:
     discord_bridge_enabled: bool = True
     discord_bridge_path: str = ""
     discord_bridge_url: str = DEFAULT_DISCORD_BRIDGE_URL
-    win_blocker_enabled: bool = True
-    win_blocker_path: Path | None = None
-    win_blocker_ready_marker: str = "Connection complete!"
-    win_blocker_ready_delay: float = 0.0
     app_id: str = "271590"
     dry_run: bool = False
     auto_detect: bool = True
@@ -82,6 +79,7 @@ def load_config(config_path: Path | str = "majestic-runner.conf", *, dry_run: bo
         gpu_mode=values.get("MAJESTIC_GPU_MODE", "auto").strip().lower() or "auto",
         gpu_device_name=values.get("MAJESTIC_GPU_DEVICE_NAME", "").strip(),
         disable_cef_gpu=parse_bool(values.get("DISABLE_CEF_GPU"), True),
+        launch_options=values.get("MAJESTIC_LAUNCH_OPTIONS", ""),
         launcher_flags=values.get("MAJESTIC_LAUNCHER_FLAGS", RunnerConfig.launcher_flags),
         selected_platform=platform_raw or "rgl",
         platform_explicit=platform_explicit,
@@ -108,10 +106,6 @@ def load_config(config_path: Path | str = "majestic-runner.conf", *, dry_run: bo
         discord_bridge_enabled=parse_bool(values.get("DISCORD_BRIDGE_ENABLED"), True),
         discord_bridge_path=values.get("DISCORD_BRIDGE_PATH", ""),
         discord_bridge_url=values.get("DISCORD_BRIDGE_URL", RunnerConfig.discord_bridge_url),
-        win_blocker_enabled=parse_bool(values.get("WIN_BLOCKER_ENABLED"), True),
-        win_blocker_path=parse_path(values.get("WIN_BLOCKER_PATH")),
-        win_blocker_ready_marker=values.get("WIN_BLOCKER_READY_MARKER", RunnerConfig.win_blocker_ready_marker),
-        win_blocker_ready_delay=parse_float(values.get("WIN_BLOCKER_READY_DELAY"), 0.0),
         app_id=values.get("APP_ID") or "271590",
         dry_run=parse_bool(values.get("DRY_RUN"), False),
         auto_detect=parse_bool(values.get("MAJESTIC_AUTO_DETECT"), True),
