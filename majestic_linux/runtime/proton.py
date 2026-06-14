@@ -90,11 +90,13 @@ def apply_launch_options(command: list[str], env: dict[str, str], launch_options
             result.extend(command)
             command_inserted = True
             continue
+        if not command_inserted and item in {"&&", ";", "export", "env"}:
+            continue
         if not command_inserted and _looks_like_env_assignment(item):
             key, value = item.split("=", 1)
             env[key] = value
             continue
-        result.append(item)
+        result.append(_expand_launch_token(item))
     if not command_inserted:
         result.extend(command)
     return result
@@ -102,6 +104,10 @@ def apply_launch_options(command: list[str], env: dict[str, str], launch_options
 
 def _looks_like_env_assignment(value: str) -> bool:
     return re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", value) is not None
+
+
+def _expand_launch_token(value: str) -> str:
+    return os.path.expanduser(value) if value.startswith("~") else value
 
 
 def run_proton(command: ProtonCommand, *, dry_run: bool = False, logger: logging.Logger | None = None) -> int:

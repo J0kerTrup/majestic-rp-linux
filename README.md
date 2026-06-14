@@ -217,11 +217,14 @@ MAJESTIC_LAUNCH_OPTIONS="gamescope -W 1920 -H 1080 -r 144 -f -- %command%"
 MAJESTIC_LAUNCH_OPTIONS="mangohud %command%"
 MAJESTIC_LAUNCH_OPTIONS="gamemoderun mangohud %command%"
 MAJESTIC_LAUNCH_OPTIONS="MANGOHUD=1 DXVK_HUD=fps %command%"
+MAJESTIC_LAUNCH_OPTIONS="~/.local/bin/game-wrapper gamescope -W 1920 -H 1080 -r 144 -f --force-grab-cursor -- %command%"
 ```
 
 Environment assignments before `%command%` are applied to the launch
-environment. If `%command%` is omitted, the runner appends the Proton command to
-the end of the option list.
+environment. The runner also accepts `export KEY=VALUE`, `env KEY=VALUE`,
+`&&`/`;` separators before `%command%`, and `~` at the start of wrapper paths.
+It does not run launch options through a shell. If `%command%` is omitted, the
+runner appends the Proton command to the end of the option list.
 
 ## Custom Storage Drive
 
