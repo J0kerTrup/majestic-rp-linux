@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from ..core.config import load_config
-from ..core.config_file import ensure_config_file
+from ..core.config_file import ensure_config_file, resolve_config_path
 from ..core.logger import setup_logging
 from ..discord.bridge import configure_discord_bridge_environment
 from ..discord.bridge import discord_ipc_sockets, find_discord_bridge
@@ -29,7 +29,7 @@ py_platform = importlib.import_module("platform")
 
 def cmd_config(args: argparse.Namespace) -> int:
     logger = setup_logging(args.debug, Path("logs"))
-    path = Path(args.config).expanduser()
+    path = resolve_config_path(args.config)
     created = ensure_config_file(path, logger)
     print(f"Config:  {path}")
     print(f"Created: {'yes' if created else 'no'}")

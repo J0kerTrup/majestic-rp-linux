@@ -4,6 +4,7 @@ import argparse
 import os
 from pathlib import Path
 
+from ..core.config_file import default_config_path
 from ..core.errors import RunnerError
 from ..core.logger import setup_logging
 from .commands import cmd_analyze_crash, cmd_clean, cmd_config, cmd_detect, cmd_doctor, cmd_doctor_radio, cmd_env, cmd_install, cmd_patch, cmd_purge_majestic, cmd_run
@@ -11,7 +12,7 @@ from .commands import cmd_analyze_crash, cmd_clean, cmd_config, cmd_detect, cmd_
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="majestic_linux", description="Majestic RP Linux Proton runner")
-    parser.add_argument("--config", default="majestic-runner.conf", help="Path to shell-style runner config")
+    parser.add_argument("--config", default=None, help=f"Path to shell-style runner config (default: {default_config_path()})")
     parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
     parser.add_argument("--dry-run", action="store_true", help="Show actions without changing files or launching Proton")
     sub = parser.add_subparsers(dest="command")

@@ -38,7 +38,8 @@ python3 -m majestic_linux <command>
 You can also run the module directly:
 
 ```bash
-python3 -m majestic_linux --config majestic-runner.conf detect
+python3 -m majestic_linux detect
+python3 -m majestic_linux --config /path/to/majestic-runner.conf detect
 ```
 
 ## Commands
@@ -74,9 +75,15 @@ Useful flags:
 
 ## Configuration
 
-The active config is `majestic-runner.conf`. If it is missing, `config` creates
-it from the built-in template. Environment variables override values from the
-file.
+The active config is `$XDG_CONFIG_HOME/majestic-runner/majestic-runner.conf`.
+If `XDG_CONFIG_HOME` is unset, the runner uses
+`~/.config/majestic-runner/majestic-runner.conf`. If the file is missing,
+`config` creates it from `examples/majestic-runner.example.conf`, falling back
+to the built-in template when the example file is not available. Environment
+variables override values from the file.
+
+On first run after upgrading, an existing `majestic-runner.conf` in the current
+project directory is copied to the XDG config path.
 
 An example lives at:
 

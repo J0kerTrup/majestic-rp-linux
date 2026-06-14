@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..core.config import RunnerConfig
+from ..core.config_file import default_config_path
 from .fixups import apply_library_path
 from .lifecycle import run_with_lifecycle
 from .wine import WineMapping
@@ -114,7 +115,7 @@ def run_proton(command: ProtonCommand, *, dry_run: bool = False, logger: logging
     compatdata_raw = command.env.get("STEAM_COMPAT_DATA_PATH")
     if not compatdata_raw:
         raise ValueError("STEAM_COMPAT_DATA_PATH is required for lifecycle-managed Proton launch")
-    config = RunnerConfig(config_path=Path("majestic-runner.conf"))
+    config = RunnerConfig(config_path=default_config_path())
     return run_with_lifecycle(command, config, Path(compatdata_raw), dry_run=dry_run, logger=logger)
 
 

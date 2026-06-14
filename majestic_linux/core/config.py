@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config_file import ensure_config_file
+from .config_file import ensure_config_file, resolve_config_path
 from .config_parser import merged_values, parse_bool, parse_float, parse_int, parse_path
 
 DEFAULT_DISCORD_BRIDGE_URL = "https://github.com/0e4ef622/wine-discord-ipc-bridge/releases/download/v0.0.3/winediscordipcbridge.exe"
@@ -63,8 +63,8 @@ class RunnerConfig:
     radio_disable_winegstreamer: bool = False
     runtime_library_paths: list[Path] | None = None
 
-def load_config(config_path: Path | str = "majestic-runner.conf", *, dry_run: bool | None = None) -> RunnerConfig:
-    path = Path(config_path).expanduser()
+def load_config(config_path: Path | str | None = None, *, dry_run: bool | None = None) -> RunnerConfig:
+    path = resolve_config_path(config_path)
     ensure_config_file(path)
     values = merged_values(path)
     platform_raw = values.get("MAJESTIC_PLATFORM", "auto").strip().lower()
