@@ -12,6 +12,12 @@ GAME_BORDERLESS=1
 MAJESTIC_GPU_MODE=auto
 MAJESTIC_GPU_DEVICE_NAME=
 
+# Steam Linux Runtime wrapper: auto, 1, 0.
+MAJESTIC_STEAM_RUNTIME=auto
+
+# Text input method for Wine/Electron: none, auto, ibus, fcitx.
+MAJESTIC_INPUT_METHOD=none
+
 # Proton/Electron launcher flags.
 DISABLE_CEF_GPU=1
 MAJESTIC_LAUNCH_OPTIONS=
