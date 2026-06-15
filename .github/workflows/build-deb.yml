@@ -43,12 +43,13 @@ jobs:
           mkdir -p deb_build/usr/share/icons/hicolor/256x256/apps
           mkdir -p deb_build/usr/share/doc/majestic-linux-runner
           mkdir -p deb_build/usr/bin
+          mkdir -p deb_build/usr/share/majestic-linux-runner
           
           pip install --root="deb_build" --prefix="/usr" --no-deps dist/*.whl
 
           cat <<EOF > deb_build/usr/share/applications/majestic-linux.desktop
           [Desktop Entry]
-          Name=Majestic RP Runner
+          Name=Majestic RP
           Comment=Launcher for Majestic RP on Linux
           Exec=majestic-linux
           Icon=majestic-linux
