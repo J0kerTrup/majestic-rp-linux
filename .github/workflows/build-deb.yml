@@ -20,6 +20,9 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
       - name: Install build tools
         run: python -m pip install --upgrade build installer
 
@@ -44,7 +47,7 @@ jobs:
 
           cat <<EOF > deb_build/usr/share/applications/majestic-linux.desktop
           [Desktop Entry]
-          Name=Majestic RP
+          Name=Majestic RP Runner
           Comment=Launcher for Majestic RP on Linux
           Exec=majestic-linux
           Icon=majestic-linux
