@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
-from dataclasses import dataclass
+import subprocess
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..core.config import RunnerConfig
+from ..core.config_file import default_config_path
 from .fixups import apply_library_path
-from .input import input_env
 from .lifecycle import run_with_lifecycle
 from .wine import WineMapping
 
@@ -18,6 +21,7 @@ class ProtonCommand:
     argv: list[str]
     env: dict[str, str]
     cwd: Path | None = None
+    after_start: list[Callable[[subprocess.Popen], None]] = field(default_factory=list)
 
 
 def build_proton_command(
@@ -29,16 +33,14 @@ def build_proton_command(
     platform: str,
     wine_mapping: WineMapping,
 ) -> ProtonCommand:
-    app_id = "271590" if platform == "steam" else (config.app_id if config.app_id != "271590" else "0")
+    app_id = _steam_app_id(config)
     env = os.environ.copy()
-    env.update(input_env(config))
+    _sanitize_host_launcher_env(env)
     env.update(
         {
             "STEAM_COMPAT_DATA_PATH": str(compatdata),
             "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(steam_root or ""),
             "STEAM_COMPAT_APP_ID": app_id,
-            "SteamAppId": app_id,
-            "SteamGameId": app_id,
             "MAJESTIC_PLATFORM": platform,
             "MAJESTIC_PROTON_PLATFORM": config.native_platform or platform,
             "MAJESTIC_DISABLE_CEF_GPU": "1" if config.disable_cef_gpu else "0",
@@ -54,6 +56,9 @@ def build_proton_command(
             "GAME_BORDERLESS": "1" if config.game_borderless else "0",
         }
     )
+    if platform == "steam":
+        env["SteamAppId"] = app_id
+        env["SteamGameId"] = app_id
     if config.disable_cef_gpu:
         env.setdefault("CEF_DISABLE_GPU", "1")
     apply_gpu_selection(env, config)
@@ -61,14 +66,56 @@ def build_proton_command(
         env["WINEDLLOVERRIDES"] = _with_dll_override(env.get("WINEDLLOVERRIDES", ""), "winegstreamer=d")
     apply_library_path(env, getattr(config, "runtime_library_paths", []))
     argv = [str(proton_path), "waitforexitandrun", str(majestic_exe), *shlex.split(config.launcher_flags)]
+    argv = apply_launch_options(argv, env, config.launch_options)
     return ProtonCommand(argv, env, majestic_exe.parent)
+
+
+def _steam_app_id(config: RunnerConfig) -> str:
+    return config.app_id if config.app_id and config.app_id != "0" else "271590"
+
+
+def _sanitize_host_launcher_env(env: dict[str, str]) -> None:
+    for key in list(env):
+        if key.startswith(("CODEX_", "VSCODE_", "ELECTRON_")) or key in {"NODE_OPTIONS", "SteamAppId", "SteamGameId"}:
+            env.pop(key, None)
+
+
+def apply_launch_options(command: list[str], env: dict[str, str], launch_options: str) -> list[str]:
+    options = shlex.split(launch_options or "")
+    if not options:
+        return command
+    result: list[str] = []
+    command_inserted = False
+    for item in options:
+        if item == "%command%":
+            result.extend(command)
+            command_inserted = True
+            continue
+        if not command_inserted and item in {"&&", ";", "export", "env"}:
+            continue
+        if not command_inserted and _looks_like_env_assignment(item):
+            key, value = item.split("=", 1)
+            env[key] = value
+            continue
+        result.append(_expand_launch_token(item))
+    if not command_inserted:
+        result.extend(command)
+    return result
+
+
+def _looks_like_env_assignment(value: str) -> bool:
+    return re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", value) is not None
+
+
+def _expand_launch_token(value: str) -> str:
+    return os.path.expanduser(value) if value.startswith("~") else value
 
 
 def run_proton(command: ProtonCommand, *, dry_run: bool = False, logger: logging.Logger | None = None) -> int:
     compatdata_raw = command.env.get("STEAM_COMPAT_DATA_PATH")
     if not compatdata_raw:
         raise ValueError("STEAM_COMPAT_DATA_PATH is required for lifecycle-managed Proton launch")
-    config = RunnerConfig(config_path=Path("majestic-runner.conf"))
+    config = RunnerConfig(config_path=default_config_path())
     return run_with_lifecycle(command, config, Path(compatdata_raw), dry_run=dry_run, logger=logger)
 
 

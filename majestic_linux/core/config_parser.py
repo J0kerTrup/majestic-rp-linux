@@ -7,7 +7,8 @@ from pathlib import Path
 from .errors import ConfigError
 from .keys import CONFIG_KEYS
 
-SECTION_PREFIXES = {"shutdown": "SHUTDOWN_", "radio": "RADIO_"}
+SECTION_PREFIXES = {"shutdown": "SHUTDOWN_", "repair": "REPAIR_"}
+MULTI_TOKEN_VALUES = {"MAJESTIC_INSTALLER_ARGS", "MAJESTIC_LAUNCHER_FLAGS", "MAJESTIC_LAUNCH_OPTIONS"}
 
 
 def parse_bool(value: str | None, default: bool = False) -> bool:
@@ -62,7 +63,7 @@ def parse_shell_config(path: Path) -> dict[str, str]:
             parsed = shlex.split(raw_value.strip(), posix=True)
         except ValueError as exc:
             raise ConfigError(f"{path}:{lineno}: cannot parse {key}") from exc
-        values[key] = parsed[0] if parsed else ""
+        values[key] = " ".join(parsed) if key in MULTI_TOKEN_VALUES else (parsed[0] if parsed else "")
     return values
 
 

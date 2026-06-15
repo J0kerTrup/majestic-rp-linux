@@ -26,16 +26,12 @@ def build_radio_report(config: RunnerConfig, result: DetectionResult, *, dry_run
     if result.proton_path:
         config.runtime_library_paths = prepare_proton_runtime_fixups(result.proton_path, dry_run=False)
     env = _proton_env(config, result)
-    logs = analyze_logs(_log_candidates(result, prefix)) if config.radio_collect_logs else analyze_logs([])
+    logs = analyze_logs(_log_candidates(result, prefix))
     checks = [system_info()]
-    if config.radio_analyze_audio_stack:
-        checks.append(audio_stack())
-    if config.radio_analyze_wine:
-        checks.extend([wine_stack(prefix, result.compatdata_path), dll_override_status(prefix)])
-    if config.radio_analyze_proton:
-        checks.append(proton_stack(result.proton_path, env))
-    if config.radio_analyze_codecs:
-        checks.extend([gstreamer_stack(), proton_gstreamer_stack(result.proton_path, config.runtime_library_paths or [], env.get("GST_PLUGIN_PATH_1_0", ""))])
+    checks.append(audio_stack())
+    checks.extend([wine_stack(prefix, result.compatdata_path), dll_override_status(prefix)])
+    checks.append(proton_stack(result.proton_path, env))
+    checks.extend([gstreamer_stack(), proton_gstreamer_stack(result.proton_path, config.runtime_library_paths or [], env.get("GST_PLUGIN_PATH_1_0", ""))])
     _add_check_causes(logs, checks)
     report_path = write_report(config, result, checks, logs, dry_run=dry_run)
     return RadioReport(checks, logs, report_path)

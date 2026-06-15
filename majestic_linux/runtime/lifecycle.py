@@ -12,7 +12,16 @@ from pathlib import Path
 
 from ..core.config import RunnerConfig
 from ..core.errors import CommandError
-from .output import start_output_capture
+from .debug_logs import (
+    append_system_event,
+    archive_and_rotate_logs,
+    collect_post_run_diagnostics,
+    collect_pre_run_diagnostics,
+    prepare_debug_environment,
+    start_debug_log_session,
+    start_process_log_capture,
+    write_crash_log,
+)
 
 WATCH_NAMES = ("wine", "wine64", "wineserver", "proton", "Xalia", "Launcher.exe", "GTA5.exe", "PlayGTAV.exe", "GTAVLauncher.exe", "RockstarService.exe")
 
@@ -59,24 +68,46 @@ def shutdown_prefix(config: RunnerConfig, prefix: Path, compatdata: Path | None,
 
 def run_with_lifecycle(command, config: RunnerConfig, compatdata: Path, *, dry_run: bool, logger: logging.Logger | None = None) -> int:
     prefix = compatdata / "pfx"
+    log_session = start_debug_log_session(logger=logger)
+    log_session.proton_log_roots = [path for path in (command.cwd, Path.cwd()) if path is not None]
+    prepare_debug_environment(command.env, log_session)
+    append_system_event(log_session, f"compatdata={compatdata}")
+    append_system_event(log_session, f"prefix={prefix}")
+    append_system_event(log_session, f"cwd={command.cwd or Path.cwd()}")
+    append_system_event(log_session, "argv=" + " ".join(command.argv))
+    collect_pre_run_diagnostics(log_session, command.env, logger=logger)
     if logger:
         logger.info("Launching Proton: %s", " ".join(command.argv))
     if dry_run:
+        append_system_event(log_session, "dry-run: Proton launch skipped")
         if logger:
             logger.success("Dry-run: Proton launch skipped")  # type: ignore[attr-defined]
+        archive = archive_and_rotate_logs(log_session, logger=logger)
+        if logger and archive:
+            logger.info("Debug log archive: %s", archive)
         return 0
     process = subprocess.Popen(command.argv, env=command.env, cwd=command.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="ignore")
-    output_thread = start_output_capture(process)
+    _run_after_start(getattr(command, "after_start", ()), process, logger)
+    output_thread = start_process_log_capture(process, log_session)
     interrupted = {"signal": None}
     previous = _install_signal_handlers(process, interrupted, logger)
+    code: int | None = None
     try:
         code = process.wait()
+        append_system_event(log_session, f"Proton process exited with code {code}")
     finally:
         _restore_signal_handlers(previous)
         if output_thread:
             output_thread.join(timeout=2)
         if config.graceful_shutdown:
             shutdown_prefix(config, prefix, compatdata, logger)
+        collect_post_run_diagnostics(log_session, command.env, logger=logger)
+        signal_number = int(interrupted["signal"]) if interrupted["signal"] else None
+        if signal_number or (code is not None and code != 0):
+            write_crash_log(log_session, code=code, signal_number=signal_number, reason="Proton process did not exit cleanly")
+        archive = archive_and_rotate_logs(log_session, logger=logger)
+        if logger and archive:
+            logger.info("Debug log archive: %s", archive)
     if interrupted["signal"]:
         return 128 + int(interrupted["signal"])
     if code != 0:
@@ -154,3 +185,12 @@ def _install_signal_handlers(process: subprocess.Popen, interrupted: dict, logge
 def _restore_signal_handlers(previous: dict[int, object]) -> None:
     for sig, handler in previous.items():
         signal.signal(sig, handler)
+
+
+def _run_after_start(hooks, process: subprocess.Popen, logger: logging.Logger | None) -> None:
+    for hook in hooks:
+        try:
+            hook(process)
+        except Exception as exc:
+            if logger:
+                logger.warning("After-start hook failed: %s", exc)

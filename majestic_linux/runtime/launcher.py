@@ -61,13 +61,12 @@ def install_majestic_launcher(
     if existing:
         return existing
     installer = ensure_installer(config, compatdata, dry_run=dry_run, logger=logger)
+    app_id = _steam_app_id(config)
     env = {
         **__import__("os").environ.copy(),
         "STEAM_COMPAT_DATA_PATH": str(compatdata),
         "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(steam_root or ""),
-        "STEAM_COMPAT_APP_ID": config.app_id or "271590",
-        "SteamAppId": config.app_id or "271590",
-        "SteamGameId": config.app_id or "271590",
+        "STEAM_COMPAT_APP_ID": app_id,
     }
     argv = [str(proton_path), "waitforexitandrun", str(installer), *shlex.split(config.installer_args)]
     if logger:
@@ -90,3 +89,7 @@ def install_majestic_launcher(
         "Majestic installer finished, but Majestic Launcher.exe was not found in the prefix. "
         f"{hint}."
     )
+
+
+def _steam_app_id(config: RunnerConfig) -> str:
+    return config.app_id if config.app_id and config.app_id != "0" else "271590"
