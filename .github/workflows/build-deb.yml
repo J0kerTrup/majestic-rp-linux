@@ -31,7 +31,7 @@ jobs:
         run: |
           COUNT=$(git rev-list --count HEAD)
           HASH=$(git rev-parse --short HEAD)
-          LATEST_TAG=$(git describe --tags --abbrev=0)
+          LATEST_TAG=$(git describe --tags --abbrev=0 | sed 's/^v//')
           echo "PKG_VER=$LATEST_TAG" >> $GITHUB_ENV
 
       - name: Build Python Wheel
