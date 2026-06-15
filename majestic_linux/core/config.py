@@ -47,6 +47,7 @@ class RunnerConfig:
     discord_bridge_enabled: bool = True
     discord_bridge_path: str = ""
     discord_bridge_url: str = DEFAULT_DISCORD_BRIDGE_URL
+    steam_overlay: bool = False
     app_id: str = "271590"
     dry_run: bool = False
     auto_detect: bool = True
@@ -106,6 +107,7 @@ def load_config(config_path: Path | str | None = None, *, dry_run: bool | None =
         discord_bridge_enabled=parse_bool(values.get("DISCORD_BRIDGE_ENABLED"), True),
         discord_bridge_path=values.get("DISCORD_BRIDGE_PATH", ""),
         discord_bridge_url=values.get("DISCORD_BRIDGE_URL", RunnerConfig.discord_bridge_url),
+        steam_overlay=parse_bool(values.get("MAJESTIC_STEAM_OVERLAY"), False),
         app_id=values.get("APP_ID") or "271590",
         dry_run=parse_bool(values.get("DRY_RUN"), False),
         auto_detect=parse_bool(values.get("MAJESTIC_AUTO_DETECT"), True),
@@ -133,6 +135,7 @@ def config_summary(config: RunnerConfig) -> dict[str, object]:
         "auto_detect": config.auto_detect,
         "log_level": config.log_level,
         "kill_wine_on_exit": config.kill_wine_on_exit,
+        "steam_overlay": config.steam_overlay,
         "steam_root": str(config.steam_root) if config.steam_root else "",
         "compatdata": str(config.compatdata_path) if config.compatdata_path else "",
         "gta_path": str(config.gta_path) if config.gta_path else "",

@@ -59,6 +59,8 @@ def build_proton_command(
     if platform == "steam":
         env["SteamAppId"] = app_id
         env["SteamGameId"] = app_id
+    if config.steam_overlay:
+        apply_steam_overlay(env, steam_root, app_id)
     if config.disable_cef_gpu:
         env.setdefault("CEF_DISABLE_GPU", "1")
     apply_gpu_selection(env, config)
@@ -109,6 +111,48 @@ def _looks_like_env_assignment(value: str) -> bool:
 
 def _expand_launch_token(value: str) -> str:
     return os.path.expanduser(value) if value.startswith("~") else value
+
+
+def apply_steam_overlay(env: dict[str, str], steam_root: Path | None, app_id: str) -> None:
+    overlay = _find_steam_overlay_renderer(steam_root)
+    if not overlay:
+        env["MAJESTIC_STEAM_OVERLAY_STATUS"] = "renderer-missing"
+        return
+    env["SteamAppId"] = app_id
+    env["SteamGameId"] = app_id
+    env["STEAM_COMPAT_APP_ID"] = app_id
+    env["STEAM_OVERLAY"] = "1"
+    env["MAJESTIC_STEAM_OVERLAY_STATUS"] = "enabled"
+    _prepend_env_path(env, "LD_PRELOAD", str(overlay))
+
+
+def _find_steam_overlay_renderer(steam_root: Path | None) -> Path | None:
+    roots = []
+    if steam_root:
+        roots.append(steam_root)
+    roots.extend(
+        Path(os.path.expanduser(path))
+        for path in (
+            "~/.local/share/Steam",
+            "~/.steam/steam",
+            "~/.steam/debian-installation",
+        )
+    )
+    seen: set[Path] = set()
+    for root in roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        for relative in ("steamrt64/gameoverlayrenderer.so", "ubuntu12_64/gameoverlayrenderer.so"):
+            candidate = root / relative
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def _prepend_env_path(env: dict[str, str], key: str, value: str) -> None:
+    existing = [item for item in env.get(key, "").split(":") if item]
+    env[key] = ":".join([value, *[item for item in existing if item != value]])
 
 
 def run_proton(command: ProtonCommand, *, dry_run: bool = False, logger: logging.Logger | None = None) -> int:

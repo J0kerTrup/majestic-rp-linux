@@ -65,7 +65,7 @@ def cmd_env(args: argparse.Namespace) -> int:
     print("Command:")
     print(" ".join(command.argv))
     print("\nEnvironment:")
-    for key in sorted(k for k in command.env if k.startswith(("STEAM_", "MAJESTIC_", "GAME_", "DISABLE_", "GST_", "PRESSURE_VESSEL_")) or k in {"LANG", "LC_ALL", "LC_CTYPE", "LD_LIBRARY_PATH", "WINEDLLOVERRIDES", "PROTON_REMOTE_DEBUG_CMD"}):
+    for key in sorted(k for k in command.env if k.startswith(("STEAM_", "MAJESTIC_", "GAME_", "DISABLE_", "GST_", "PRESSURE_VESSEL_")) or k in {"LANG", "LC_ALL", "LC_CTYPE", "LD_LIBRARY_PATH", "LD_PRELOAD", "SteamAppId", "SteamGameId", "WINEDLLOVERRIDES", "PROTON_REMOTE_DEBUG_CMD"}):
         print(f"{key}={command.env[key]}")
     return 0
 

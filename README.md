@@ -141,6 +141,7 @@ Sidecar helpers:
 DISCORD_BRIDGE_ENABLED=1
 DISCORD_BRIDGE_PATH=
 DISCORD_BRIDGE_URL="https://github.com/0e4ef622/wine-discord-ipc-bridge/releases/download/v0.0.3/winediscordipcbridge.exe"
+MAJESTIC_STEAM_OVERLAY=0
 ```
 
 Shutdown and repair settings use INI sections:
@@ -232,6 +233,25 @@ environment. The runner also accepts `export KEY=VALUE`, `env KEY=VALUE`,
 `&&`/`;` separators before `%command%`, and `~` at the start of wrapper paths.
 It does not run launch options through a shell. If `%command%` is omitted, the
 runner appends the Proton command to the end of the option list.
+
+## Steam Overlay
+
+By default, the runner starts Majestic Launcher directly through Proton instead
+of asking Steam to launch the game. That means Steam's `Shift+Tab` overlay may
+not be injected, even when the Steam GTA V prefix and app id are used.
+
+For a best-effort overlay injection, start the Steam client first and set:
+
+```ini
+MAJESTIC_STEAM_OVERLAY=1
+```
+
+When enabled, the runner looks for Steam's 64-bit `gameoverlayrenderer.so`,
+prepends it to `LD_PRELOAD`, and exports the Steam app/game ids for the Proton
+process. This is experimental and depends on the local Steam runtime; if the
+overlay renderer is missing, the launch continues without overlay injection.
+Check `./install-and-run-majestic-proton.sh env` for
+`MAJESTIC_STEAM_OVERLAY_STATUS` and `LD_PRELOAD`.
 
 ## Custom Storage Drive
 

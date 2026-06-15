@@ -48,6 +48,9 @@ DISCORD_BRIDGE_ENABLED=1
 DISCORD_BRIDGE_PATH=
 DISCORD_BRIDGE_URL="https://github.com/0e4ef622/wine-discord-ipc-bridge/releases/download/v0.0.3/winediscordipcbridge.exe"
 
+# Experimental Steam Overlay injection. Start Steam first, then set to 1.
+MAJESTIC_STEAM_OVERLAY=0
+
 # Optional manual paths. Leave empty for auto-detection.
 APP_ID=271590
 STEAM_ROOT=
