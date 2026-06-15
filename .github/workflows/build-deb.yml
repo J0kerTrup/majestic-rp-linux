@@ -1,0 +1,96 @@
+name: Build DEB Package
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: python -m pip install --upgrade build installer
+
+      - name: Calculate Version
+        id: version
+        run: |
+          COUNT=$(git rev-list --count HEAD)
+          HASH=$(git rev-parse --short HEAD)
+          echo "PKG_VER=0.1.0-r${COUNT}.${HASH}" >> $GITHUB_ENV
+
+      - name: Build Python Wheel
+        run: python -m build --wheel --no-isolation
+
+      - name: Prepare DEB structure
+        run: |
+          mkdir -p deb_build/DEBIAN
+          mkdir -p deb_build/usr/share/applications
+          mkdir -p deb_build/usr/share/icons/hicolor/256x256/apps
+          mkdir -p deb_build/usr/share/doc/majestic-linux-runner
+          
+          pip install --root="deb_build" --prefix="/usr" --no-deps dist/*.whl
+
+          cat <<EOF > deb_build/usr/share/applications/majestic-linux.desktop
+          [Desktop Entry]
+          Name=Majestic RP
+          Comment=Launcher for Majestic RP on Linux
+          Exec=majestic-linux
+          Icon=majestic-linux
+          Terminal=false
+          Type=Application
+          Categories=Game;
+          EOF
+          
+          wget -qO temp-icon.webp "https://majestic-rp.ru/images/keys/step-icon__launcher.webp"
+          convert temp-icon.webp deb_build/usr/share/icons/hicolor/256x256/apps/majestic-linux.png
+          rm temp-icon.webp
+          
+          if [ -f "examples/majestic-runner.example.conf" ]; then
+            cp examples/majestic-runner.example.conf deb_build/usr/share/doc/majestic-linux-runner/
+          fi
+
+      - name: Create DEBIAN metadata
+        run: |
+          cat <<EOF > deb_build/DEBIAN/control
+          Package: majestic-linux-runner
+          Version: ${{ env.PKG_VER }}
+          Architecture: all
+          Maintainer: Majestic Runner Team
+          Depends: python3, bash, npm
+          Section: games
+          Priority: optional
+          Description: Python orchestration runner for Majestic RP on Linux via Proton
+          EOF
+          
+          cat <<EOF > deb_build/DEBIAN/postinst
+          #!/bin/bash
+          set -e
+          if [ "\$1" = "configure" ]; then
+              echo "Installing @electron/asar globally via npm..."
+              npm install -g @electron/asar
+          fi
+          exit 0
+          EOF
+          
+          chmod 755 deb_build/DEBIAN/postinst
+
+      - name: Build DEB Package
+        run: dpkg-deb --root-owner-group --build deb_build majestic-linux-runner_${{ env.PKG_VER }}_all.deb
+
+      - name: Upload DEB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: majestic-linux-runner-deb
+          path: '*.deb'
