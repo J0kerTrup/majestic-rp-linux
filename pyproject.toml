@@ -7,14 +7,14 @@ name = "majestic-linux-runner"
 version = "1.2.0"
 description = "Python orchestration runner for Majestic RP on Linux via Proton"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Majestic Linux Runner" }]
 classifiers = [
   "Environment :: Console",
   "Intended Audience :: End Users/Desktop",
   "Operating System :: POSIX :: Linux",
-  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.11",
   "Topic :: Games/Entertainment",
 ]
 
