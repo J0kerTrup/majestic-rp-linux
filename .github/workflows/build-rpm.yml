@@ -106,7 +106,7 @@ jobs:
           %setup -q -c -n %{name}
 
           %build
-          python3 -m build --wheel --no-isolation
+          %{__python3} -m build --wheel --no-isolation
 
           %install
           rm -rf %{buildroot}
@@ -117,7 +117,11 @@ jobs:
           mkdir -p %{buildroot}%{_datadir}/majestic-linux-runner
           mkdir -p %{buildroot}%{_docdir}/majestic-linux-runner
 
-          python3 -m installer --destdir="%{buildroot}" dist/*.whl
+          %{__python3} -m installer --destdir="%{buildroot}" dist/*.whl
+
+          if [ -f "%{buildroot}%{_bindir}/majestic-linux" ]; then
+            sed -i '1s|^#!.*python3.*$|#!%{__python3}|' "%{buildroot}%{_bindir}/majestic-linux"
+          fi
 
           cat > %{buildroot}%{_datadir}/applications/majestic-linux.desktop << 'DESK'
           [Desktop Entry]
@@ -165,6 +169,14 @@ jobs:
       - name: Show generated RPMs
         run: |
           find ~/rpmbuild/RPMS -type f -name "*.rpm" -print
+
+      - name: Verify RPM dependencies
+        run: |
+          rpm -qpR ~/rpmbuild/RPMS/noarch/*.rpm
+          if rpm -qpR ~/rpmbuild/RPMS/noarch/*.rpm | grep -q '^/usr/sbin/python3$'; then
+            echo "Unexpected dependency on /usr/sbin/python3"
+            exit 1
+          fi
 
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
