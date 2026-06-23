@@ -451,14 +451,7 @@ logs/YYYY-MM-DD_HH-MM-SS.tar.gz
 
 Only the newest 30 log sessions are kept.
 
-## G Radio Diagnostics
 
-Radio tooling is diagnostic. It does not install packages, does not run
-winetricks, does not modify the prefix, and does not kill processes.
-
-```bash
-./install-and-run-majestic-proton.sh doctor-radio
-```
 
 The report is written to:
 
