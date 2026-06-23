@@ -7,7 +7,6 @@ on:
 
 jobs:
   build-rpm:
-    # Run the job inside a clean Fedora environment
     runs-on: ubuntu-latest
     container: fedora:latest
 
@@ -15,76 +14,112 @@ jobs:
       - name: Install system tools
         run: |
           dnf update -y
-          # Install git for checkout and utilities for RPM building
-          dnf install -y git tar rpm-build rpmdevtools
-          # Install dependencies
-          dnf install -y python3 python3-devel python3-pip python3-build \
-                         python3-setuptools python3-wheel \
-                         ImageMagick wget nodejs npm
-
-      - name: Set safe directory for Git
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          dnf install -y \
+            git \
+            tar \
+            gzip \
+            rpm-build \
+            rpmdevtools \
+            python3 \
+            python3-devel \
+            python3-pip \
+            python3-build \
+            python3-installer \
+            python3-setuptools \
+            python3-wheel \
+            ImageMagick \
+            wget \
+            nodejs \
+            npm
 
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Calculate Version
-        id: version
+      - name: Set safe directory for Git
         run: |
-          # RPM versions must not contain hyphens, so we replace them with underscores
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "1.0.0")
-          COUNT=$(git rev-list --count HEAD)
-          HASH=$(git rev-parse --short HEAD)
-          echo "PKG_VER=${LATEST_TAG//-/_}" >> $GITHUB_ENV
-          echo "PKG_REL=${COUNT}.${HASH}" >> $GITHUB_ENV
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Prepare RPM build environment
+      - name: Calculate RPM version
         run: |
-          # Create the standard RPM directory structure
+          RAW_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.0")"
+          RAW_TAG="${RAW_TAG#v}"
+
+          PKG_VER="$(echo "$RAW_TAG" | sed 's/[^A-Za-z0-9._~]/_/g')"
+          PKG_REL="$(git rev-list --count HEAD).$(git rev-parse --short HEAD)"
+
+          echo "PKG_VER=$PKG_VER" >> "$GITHUB_ENV"
+          echo "PKG_REL=$PKG_REL" >> "$GITHUB_ENV"
+
+          echo "RPM version: $PKG_VER"
+          echo "RPM release: $PKG_REL"
+
+      - name: Prepare RPM source archive
+        run: |
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          # Pack the current repository sources into an archive (as required by RPM)
-          tar -czvf ~/rpmbuild/SOURCES/majestic-linux-runner.tar.gz --exclude='.git' -C "$GITHUB_WORKSPACE" .
 
-      - name: Generate Spec File
+          tar -czf ~/rpmbuild/SOURCES/majestic-linux-runner.tar.gz \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='dist' \
+            --exclude='build' \
+            --exclude='*.egg-info' \
+            --exclude='__pycache__' \
+            --exclude='.pytest_cache' \
+            -C "$GITHUB_WORKSPACE" .
+
+      - name: Generate RPM spec
         run: |
-          # Dynamically create a spec file, analogous to DEBIAN/control + PKGBUILD
-          cat << 'EOF' > ~/rpmbuild/SPECS/majestic-linux-runner.spec
+          cat > ~/rpmbuild/SPECS/majestic-linux-runner.spec << EOF
           Name:           majestic-linux-runner
-          Version:        ${{ env.PKG_VER }}
-          Release:        ${{ env.PKG_REL }}%{?dist}
+          Version:        ${PKG_VER}
+          Release:        ${PKG_REL}%{?dist}
           Summary:        Python orchestration runner for Majestic RP on Linux via Proton
-          BuildArch:      noarch
+
           License:        MIT
-          URL:            https://github.com/j0kertrup/majestic-rp-linux
+          URL:            https://github.com/J0kerTrup/majestic-rp-linux
           Source0:        %{name}.tar.gz
 
-          Requires:       python3, bash, nodejs
+          BuildArch:      noarch
+
+          BuildRequires:  python3
+          BuildRequires:  python3-devel
+          BuildRequires:  python3-build
+          BuildRequires:  python3-installer
+          BuildRequires:  python3-setuptools
+          BuildRequires:  python3-wheel
+          BuildRequires:  nodejs
+          BuildRequires:  npm
+          BuildRequires:  ImageMagick
+          BuildRequires:  wget
+
+          Requires:       python3
+          Requires:       bash
+          Requires:       nodejs
+          Requires:       npm
 
           %description
           Python orchestration runner for Majestic RP on Linux via Proton.
 
           %prep
-          # Extract sources (the -c flag creates a folder before unpacking)
           %setup -q -c -n %{name}
 
           %build
           python3 -m build --wheel --no-isolation
 
           %install
-          # Create the directory structure inside the "buildroot" (analogous to deb_build)
+          rm -rf %{buildroot}
+
           mkdir -p %{buildroot}%{_bindir}
           mkdir -p %{buildroot}%{_datadir}/applications
           mkdir -p %{buildroot}%{_datadir}/icons/hicolor/256x256/apps
           mkdir -p %{buildroot}%{_datadir}/majestic-linux-runner
           mkdir -p %{buildroot}%{_docdir}/majestic-linux-runner
 
-          # 1. Install the Python package
           python3 -m installer --destdir="%{buildroot}" dist/*.whl
 
-          # 2. Create the Desktop file
-          cat << 'DESK' > %{buildroot}%{_datadir}/applications/majestic-linux.desktop
+          cat > %{buildroot}%{_datadir}/applications/majestic-linux.desktop << 'DESK'
           [Desktop Entry]
           Name=Majestic RP
           Comment=Launcher for Majestic RP on Linux
@@ -93,41 +128,46 @@ jobs:
           Terminal=false
           Type=Application
           Categories=Game;
+          StartupNotify=true
           DESK
 
-          # 3. Download and convert the icon
           wget -qO temp-icon.webp "https://majestic-rp.ru/images/keys/step-icon__launcher.webp"
           convert temp-icon.webp %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/majestic-linux.png
 
-          # 4. Copy configs (if any exist)
           if [ -f "examples/majestic-runner.example.conf" ]; then
             cp examples/majestic-runner.example.conf %{buildroot}%{_docdir}/majestic-linux-runner/
           fi
 
-          # 5. Node.js workaround for asar
           cd %{buildroot}%{_datadir}/majestic-linux-runner
           npm init -y
           npm install @electron/asar
           cd -
 
-          # Relative symlink to asar
-          ln -s ../share/majestic-linux-runner/node_modules/.bin/asar %{buildroot}%{_bindir}/asar
+          ln -sf ../share/majestic-linux-runner/node_modules/.bin/asar %{buildroot}%{_bindir}/asar
 
           %files
-          # This section strictly dictates which files RPM should package
           %{_bindir}/*
           %{python3_sitelib}/*
           %{_datadir}/applications/majestic-linux.desktop
           %{_datadir}/icons/hicolor/256x256/apps/majestic-linux.png
           %{_datadir}/majestic-linux-runner/
           %{_docdir}/majestic-linux-runner/
+
+          %changelog
+          * Tue Jun 23 2026 Majestic Linux Builder <noreply@example.com> - ${PKG_VER}-${PKG_REL}
+          - Automated RPM build from GitHub Actions
           EOF
 
-      - name: Build RPM Package
-        run: rpmbuild -ba ~/rpmbuild/SPECS/majestic-linux-runner.spec
+      - name: Build RPM package
+        run: |
+          rpmbuild -ba ~/rpmbuild/SPECS/majestic-linux-runner.spec
 
-      - name: Upload RPM Artifact
+      - name: Show generated RPMs
+        run: |
+          find ~/rpmbuild/RPMS -type f -name "*.rpm" -print
+
+      - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
         with:
           name: majestic-linux-runner-rpm
-          path: ~/rpmbuild/RPMS/noarch/*.rpm
+          path: /github/home/rpmbuild/RPMS/noarch/*.rpm
