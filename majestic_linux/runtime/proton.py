@@ -13,6 +13,8 @@ from ..core.config import RunnerConfig
 from ..core.config_file import default_config_path
 from .fixups import apply_library_path
 from .lifecycle import run_with_lifecycle
+from .steam_compat import apply_steam_compat
+from .text_input import apply_text_input_environment
 from .wine import WineMapping
 
 
@@ -59,13 +61,17 @@ def build_proton_command(
     if platform == "steam":
         env["SteamAppId"] = app_id
         env["SteamGameId"] = app_id
+    if config.steam_overlay:
+        apply_steam_overlay(env, steam_root, app_id)
     if config.disable_cef_gpu:
         env.setdefault("CEF_DISABLE_GPU", "1")
+    apply_text_input_environment(env, config)
     apply_gpu_selection(env, config)
     if config.radio_disable_winegstreamer:
         env["WINEDLLOVERRIDES"] = _with_dll_override(env.get("WINEDLLOVERRIDES", ""), "winegstreamer=d")
     apply_library_path(env, getattr(config, "runtime_library_paths", []))
     argv = [str(proton_path), "waitforexitandrun", str(majestic_exe), *shlex.split(config.launcher_flags)]
+    argv = apply_steam_compat(argv, env, config, app_id=app_id, proton_path=proton_path, steam_root=steam_root, gta_path=wine_mapping.gta_path)
     argv = apply_launch_options(argv, env, config.launch_options)
     return ProtonCommand(argv, env, majestic_exe.parent)
 
@@ -109,6 +115,62 @@ def _looks_like_env_assignment(value: str) -> bool:
 
 def _expand_launch_token(value: str) -> str:
     return os.path.expanduser(value) if value.startswith("~") else value
+
+
+def apply_steam_overlay(env: dict[str, str], steam_root: Path | None, app_id: str) -> None:
+    renderers = _find_steam_overlay_renderers(steam_root)
+    if not renderers:
+        env["MAJESTIC_STEAM_OVERLAY_STATUS"] = "renderer-missing"
+        return
+    env["SteamAppId"] = app_id
+    env["SteamGameId"] = app_id
+    env["SteamOverlayGameId"] = app_id
+    env["STEAM_COMPAT_APP_ID"] = app_id
+    env["STEAM_OVERLAY"] = "1"
+    env["ENABLE_VK_LAYER_VALVE_steam_overlay_1"] = "1"
+    env["MAJESTIC_STEAM_OVERLAY_STATUS"] = "enabled"
+    env["MAJESTIC_STEAM_OVERLAY_RENDERERS"] = ":".join(str(path) for path in renderers)
+    _prepend_env_paths(env, "LD_PRELOAD", [str(path) for path in renderers])
+
+
+def _find_steam_overlay_renderers(steam_root: Path | None) -> list[Path]:
+    roots = []
+    if steam_root:
+        roots.append(steam_root)
+    roots.extend(
+        Path(os.path.expanduser(path))
+        for path in (
+            "~/.local/share/Steam",
+            "~/.steam/steam",
+            "~/.steam/debian-installation",
+        )
+    )
+    seen: set[Path] = set()
+    for root in roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        candidates = [
+            root / "ubuntu12_32" / "gameoverlayrenderer.so",
+            root / "ubuntu12_64" / "gameoverlayrenderer.so",
+        ]
+        existing = [candidate for candidate in candidates if candidate.is_file()]
+        if existing:
+            return existing
+        fallback = [
+            root / "steamrt32" / "gameoverlayrenderer.so",
+            root / "steamrt64" / "gameoverlayrenderer.so",
+        ]
+        existing = [candidate for candidate in fallback if candidate.is_file()]
+        if existing:
+            return existing
+    return []
+
+
+def _prepend_env_paths(env: dict[str, str], key: str, values: list[str]) -> None:
+    existing = [item for item in env.get(key, "").split(":") if item]
+    prefix = list(dict.fromkeys(item for item in values if item))
+    env[key] = ":".join([*prefix, *[item for item in existing if item not in prefix]])
 
 
 def run_proton(command: ProtonCommand, *, dry_run: bool = False, logger: logging.Logger | None = None) -> int:

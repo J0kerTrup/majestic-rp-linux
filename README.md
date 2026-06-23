@@ -141,6 +141,7 @@ Sidecar helpers:
 DISCORD_BRIDGE_ENABLED=1
 DISCORD_BRIDGE_PATH=
 DISCORD_BRIDGE_URL="https://github.com/0e4ef622/wine-discord-ipc-bridge/releases/download/v0.0.3/winediscordipcbridge.exe"
+MAJESTIC_STEAM_OVERLAY=0
 ```
 
 Shutdown and repair settings use INI sections:
@@ -233,6 +234,51 @@ environment. The runner also accepts `export KEY=VALUE`, `env KEY=VALUE`,
 It does not run launch options through a shell. If `%command%` is omitted, the
 runner appends the Proton command to the end of the option list.
 
+## Capturing Steam Environment
+
+To inspect what Steam injects around the game, temporarily use this Steam launch
+option:
+
+```bash
+"/path/to/majestic-rp-linux/tools/steam-env-capture.sh" -- %command%
+```
+
+It writes `env.txt`, `meta.txt`, and process details to:
+
+```text
+logs/steam-env-capture/
+```
+
+Use `--no-run` to capture the environment and stop before launching the game:
+
+```bash
+"/path/to/majestic-rp-linux/tools/steam-env-capture.sh" --no-run
+```
+
+The captured environment can contain account/session data. Do not paste the full
+file publicly.
+
+## Steam Overlay
+
+By default, the runner starts Majestic Launcher directly through Proton instead
+of asking Steam to launch the game. That means Steam's `Shift+Tab` overlay may
+not be injected, even when the Steam GTA V prefix and app id are used.
+
+For a best-effort overlay injection, start the Steam client first and set:
+
+```ini
+MAJESTIC_STEAM_OVERLAY=1
+```
+
+When enabled, the runner looks for Steam's 32-bit and 64-bit
+`gameoverlayrenderer.so` files, prepends them to `LD_PRELOAD`, enables Steam's
+Vulkan overlay layer flag, and exports the Steam app/game ids for the Proton
+process. This is experimental and depends on the local Steam runtime; if the
+overlay renderer is missing, the launch continues without overlay injection.
+Check `./install-and-run-majestic-proton.sh env` for
+`MAJESTIC_STEAM_OVERLAY_STATUS`, `MAJESTIC_STEAM_OVERLAY_RENDERERS`, and
+`LD_PRELOAD`.
+
 ## Custom Storage Drive
 
 Majestic Launcher can install its multiplayer files to any visible Windows
@@ -296,6 +342,35 @@ When configured by URL, the runner downloads the bridge into `cache/`. It also
 adds the bridge and the first detected `discord-ipc-*` socket to
 `PRESSURE_VESSEL_FILESYSTEMS_RW`, matching the behavior of the original bridge
 wrapper script.
+
+## Steam Linux Runtime
+
+Steam launches Proton through `SteamLinuxRuntime_4/_v2-entry-point` and adds a
+larger `STEAM_COMPAT_*` environment than a direct Proton launch. The runner can
+mirror that path without asking Steam to start the game:
+
+```ini
+MAJESTIC_STEAM_RUNTIME=auto
+```
+
+`auto` uses the runtime when it is found next to the selected Proton install.
+Set `MAJESTIC_STEAM_RUNTIME=0` to skip only the runtime wrapper. The Steam-like
+compatibility environment is still applied because Proton expects those
+`STEAM_COMPAT_*` values.
+
+## Text Input
+
+The runner can optionally export input method variables for Wine/Electron. The
+Steam environment captured during debugging did not include these variables, so
+this shim is disabled by default.
+
+Default:
+
+```ini
+MAJESTIC_INPUT_METHOD=none
+```
+
+Use `MAJESTIC_INPUT_METHOD=auto`, `ibus`, or `fcitx` to enable it.
 
 ## Fonts And Icons
 
