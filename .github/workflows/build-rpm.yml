@@ -17,8 +17,9 @@ jobs:
           dnf update -y
           # Install git for checkout and utilities for RPM building
           dnf install -y git tar rpm-build rpmdevtools
-          # Install dependencies from PKGBUILD / build-deb.yml
+          # Install dependencies
           dnf install -y python3 python3-devel python3-pip python3-build \
+                         python3-setuptools python3-wheel \
                          ImageMagick wget nodejs npm
 
       - name: Set safe directory for Git
