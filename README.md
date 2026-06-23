@@ -1,5 +1,7 @@
 # Majestic RP Linux Runner
 
+Installation guide: [INSTALL.md](INSTALL.md)
+
 Python runner for launching Majestic RP on Linux through Proton. It detects
 Steam, Proton, GTA V, compatdata/prefix, and Majestic Launcher, prepares the
 Wine prefix, applies launcher/runtime fixes, configures optional sidecars, and
@@ -9,7 +11,7 @@ Support Discord: <https://discord.gg/fkNExq39Yg>
 
 ## Requirements
 
-- Python 3.14 or newer.
+- Python 3.11 or newer.
 - Steam GTA V with a Proton prefix, or an explicitly configured Proton/GTA path.
 - `protontricks` or `winetricks` for first-run prefix setup.
 - `asar` for launcher `app.asar` patching.
@@ -42,6 +44,13 @@ python3 -m majestic_linux detect
 python3 -m majestic_linux --config /path/to/majestic-runner.conf detect
 ```
 
+If installed as a Python package, the console entry point is also available:
+
+```bash
+majestic-linux detect
+majestic-linux run
+```
+
 ## Commands
 
 ```bash
@@ -54,6 +63,7 @@ python3 -m majestic_linux --config /path/to/majestic-runner.conf detect
 ./install-and-run-majestic-proton.sh env
 ./install-and-run-majestic-proton.sh dry-run
 ./install-and-run-majestic-proton.sh install
+./install-and-run-majestic-proton.sh installer
 ./install-and-run-majestic-proton.sh patch
 ./install-and-run-majestic-proton.sh clean
 ./install-and-run-majestic-proton.sh purge-majestic
@@ -96,12 +106,14 @@ Most users should leave paths empty and let auto-detection do the work:
 ```ini
 MAJESTIC_PLATFORM=auto
 MAJESTIC_AUTO_DETECT=1
+MAJESTIC_PROTON_NATIVE_PLATFORM=
 APP_ID=271590
 STEAM_ROOT=
 STEAM_COMPAT_DATA_PATH=
 GTA_PATH=
 PROTON_PATH=
 MAJESTIC_EXE=
+MAJESTIC_SOURCE_ROOT=
 ```
 
 Common runtime settings:
@@ -112,11 +124,16 @@ GAME_HEIGHT=1080
 GAME_WINDOWED=1
 GAME_BORDERLESS=1
 MAJESTIC_GPU_MODE=auto
+MAJESTIC_GPU_DEVICE_NAME=
+MAJESTIC_STEAM_RUNTIME=auto
+MAJESTIC_INPUT_METHOD=none
 DISABLE_CEF_GPU=1
 MAJESTIC_LAUNCH_OPTIONS=
+MAJESTIC_LAUNCHER_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu-sandbox --disable-gpu --disable-gpu-compositing --disable-direct-composition --disable-features=DirectComposition,CalculateNativeWinOcclusion"
 GTA_WINE_DRIVE=g
 MAJESTIC_STORAGE_PATH=
 MAJESTIC_STORAGE_WINE_DRIVE=m
+MAJESTIC_PERMISSIONS=1
 MAJESTIC_LOG_LEVEL=INFO
 DRY_RUN=0
 ```
@@ -174,7 +191,7 @@ is enabled only by `doctor-radio`, `run --radio-safe`, or
 3. Maps the real GTA V directory into the Wine prefix, usually as `G:`.
 4. Optionally maps a custom Majestic storage directory into the prefix.
 5. Runs first-launch setup if the setup marker is missing.
-6. Applies launcher patching and repair checks.
+6. Applies launcher patching when setup is needed.
 7. Prepares fonts, Caps Lock cleanup, and helper sidecars.
 8. Launches Majestic Launcher through Proton.
 9. Cleans only the current prefix on exit.
@@ -199,6 +216,8 @@ Win10 compatibility mode is selected by platform:
 First `run` also performs setup automatically when the marker is missing. Use
 `--gui` with `run`, `install`, or `patch` when protontricks/winetricks needs GUI
 diagnostics.
+
+`installer` is an alias for `install`.
 
 The setup path installs Majestic Launcher when missing, prepares the prefix,
 applies Win10/corefonts/emoji font fixes, installs PowerShell for Electron disk
@@ -233,30 +252,6 @@ environment. The runner also accepts `export KEY=VALUE`, `env KEY=VALUE`,
 `&&`/`;` separators before `%command%`, and `~` at the start of wrapper paths.
 It does not run launch options through a shell. If `%command%` is omitted, the
 runner appends the Proton command to the end of the option list.
-
-## Capturing Steam Environment
-
-To inspect what Steam injects around the game, temporarily use this Steam launch
-option:
-
-```bash
-"/path/to/majestic-rp-linux/tools/steam-env-capture.sh" -- %command%
-```
-
-It writes `env.txt`, `meta.txt`, and process details to:
-
-```text
-logs/steam-env-capture/
-```
-
-Use `--no-run` to capture the environment and stop before launching the game:
-
-```bash
-"/path/to/majestic-rp-linux/tools/steam-env-capture.sh" --no-run
-```
-
-The captured environment can contain account/session data. Do not paste the full
-file publicly.
 
 ## Steam Overlay
 
@@ -538,6 +533,5 @@ majestic_linux/runtime/    Proton, Wine, lifecycle, sidecars, fonts, cleanup
 majestic_linux/patching/   app.asar and JS patching
 majestic_linux/discord/    Discord RPC bridge support
 majestic_linux/radio/      read-only radio diagnostics
-helpers/                   bundled helper sources and binaries
 examples/                  example config
 ```
