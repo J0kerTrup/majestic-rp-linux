@@ -212,18 +212,15 @@ def _select_gta_path_curses(stdscr, state: ConfiguratorState, logger) -> str:
     config = load_config(state.config_path)
     candidates = gta_path_candidates(find_steam_root(config))
     selected = 0
-    action_selected = 0
-    focus = "candidates"
     while True:
-        selected = min(selected, max(0, len(candidates) - 1))
-        choice, selected, action_selected, focus = _select_gta_dialog(stdscr, candidates, selected, action_selected, focus)
+        selected = min(selected, max(0, len(candidates) + 2))
+        choice, selected = _select_gta_dialog(stdscr, candidates, selected)
         if choice is None or choice == "back":
             return "Selection cancelled."
         if choice == "deep":
             _status_screen(stdscr, "Deep scanning home and mounted drives...")
             candidates = gta_path_candidates(find_steam_root(config), deep_scan=True)
             selected = 0
-            focus = "candidates" if candidates else "actions"
             continue
         if choice == "manual":
             raw = _prompt(stdscr, "Manual GTA V path", "Path", "")
@@ -243,83 +240,77 @@ def _select_gta_dialog(
     stdscr,
     candidates: list[Path],
     selected: int,
-    action_selected: int,
-    focus: str,
-) -> tuple[str | None, int, int, str]:
-    actions = [("deep", "Deep scan"), ("manual", "Manual path"), ("back", "Back")]
-    if not candidates:
-        focus = "actions"
+) -> tuple[str | None, int]:
+    actions = [
+        ("deep", "Deep scan", "Search home and mounted drives"),
+        ("manual", "Manual path", "Type a custom GTA V directory"),
+        ("back", "Back", "Return to main menu"),
+    ]
     while True:
+        rows: list[tuple[str, str, str, Path | None]] = []
+        for index, path in enumerate(candidates):
+            rows.append((f"path:{index}", _compact_path_label(str(path)), detect_gta_platform(path), path))
+        rows.extend((value, label, desc, None) for value, label, desc in actions)
+        selected = min(selected, max(0, len(rows) - 1))
+
         stdscr.erase()
         _paint_background(stdscr)
         height, width = stdscr.getmaxyx()
         detail_height = 5 if height >= 18 else 0
-        action_height = 4
-        box_h = min(height - 2, max(12, min(len(candidates) + detail_height + action_height + 6, height - 2)))
+        box_h = min(height - 2, max(12, min(len(rows) + detail_height + 7, height - 2)))
         box_w = min(width - 4, 92)
         top = max(0, (height - box_h) // 2)
         left = max(0, (width - box_w) // 2)
         _draw_box(stdscr, top, left, box_h, box_w, "Select GTA V path")
 
         list_top = top + 3
-        detail_top = top + box_h - detail_height - action_height - 1 if detail_height else top + box_h - action_height - 1
+        detail_top = top + box_h - detail_height - 1 if detail_height else top + box_h - 2
         list_bottom = max(list_top, detail_top - 1)
         visible = max(1, list_bottom - list_top)
-        _addstr(stdscr, top + 2, left + 3, "Detected installs", curses.color_pair(3) | curses.A_BOLD)
+        action_header_index = len(candidates)
+        start = max(0, selected - visible + 1)
         if candidates:
-            start = max(0, selected - visible + 1)
-            for index, path in enumerate(candidates[start : start + visible], start):
-                attr = curses.color_pair(5) | curses.A_BOLD if focus == "candidates" and index == selected else curses.color_pair(2)
-                marker = ">" if focus == "candidates" and index == selected else " "
-                platform = detect_gta_platform(path)
-                line = _truncate(f"{marker} {_compact_path_label(str(path)):<38} {platform}", box_w - 6)
-                _addstr(stdscr, list_top + index - start, left + 3, line.ljust(box_w - 6), attr)
+            _addstr(stdscr, top + 2, left + 3, "Detected installs", curses.color_pair(3) | curses.A_BOLD)
         else:
-            _addstr(stdscr, list_top, left + 3, "No GTA V candidates found. Use Deep scan or Manual path.", curses.color_pair(4))
+            _addstr(stdscr, top + 2, left + 3, "No detected installs", curses.color_pair(4) | curses.A_BOLD)
+        row = list_top
+        for index in range(start, min(len(rows), start + visible)):
+            if index == action_header_index:
+                if row < list_bottom:
+                    _addstr(stdscr, row, left + 3, "Actions", curses.color_pair(3) | curses.A_BOLD)
+                    row += 1
+                if row >= list_bottom:
+                    break
+            value, label, desc, _path = rows[index]
+            attr = curses.color_pair(5) | curses.A_BOLD if index == selected else curses.color_pair(2)
+            marker = ">" if index == selected else " "
+            line = _truncate(f"{marker} {label:<38} {desc}", box_w - 6)
+            _addstr(stdscr, row, left + 3, line.ljust(box_w - 6), attr)
+            row += 1
 
         if detail_height:
-            _addstr(stdscr, detail_top, left + 3, "Selected install", curses.color_pair(3) | curses.A_BOLD)
+            _addstr(stdscr, detail_top, left + 3, "Selected", curses.color_pair(3) | curses.A_BOLD)
             _addstr(stdscr, detail_top + 1, left + 3, "-" * (box_w - 6), curses.color_pair(6))
-            selected_text = str(candidates[selected]) + f"  {detect_gta_platform(candidates[selected])}" if candidates else "-"
+            value, label, desc, path = rows[selected]
+            selected_text = f"{path}  {desc}" if path else f"{label}  {desc}"
             detail_lines = _wrap_text(selected_text, box_w - 6, detail_height - 3)
             for index in range(detail_height - 3):
                 _addstr(stdscr, detail_top + 2 + index, left + 3, " " * (box_w - 6), curses.color_pair(2))
             for index, line in enumerate(detail_lines):
                 _addstr(stdscr, detail_top + 2 + index, left + 3, line, curses.color_pair(2))
 
-        action_top = top + box_h - action_height
-        _addstr(stdscr, action_top, left + 3, "Actions", curses.color_pair(3) | curses.A_BOLD)
-        action_x = left + 3
-        for index, (_value, label) in enumerate(actions):
-            attr = curses.color_pair(5) | curses.A_BOLD if focus == "actions" and index == action_selected else curses.color_pair(2)
-            text = f" {label} "
-            _addstr(stdscr, action_top + 1, action_x, text, attr)
-            action_x += len(text) + 2
-        _addstr(stdscr, top + box_h - 2, left + 3, "Up/Down: installs  Tab: actions  Enter: select  Esc: back", curses.color_pair(6))
+        _addstr(stdscr, top + box_h - 2, left + 3, "Up/Down: move  Enter: select  Esc: back", curses.color_pair(6))
         stdscr.refresh()
 
         key = stdscr.getch()
-        if key in (9,):
-            focus = "actions" if focus == "candidates" else ("candidates" if candidates else "actions")
-        elif key in (curses.KEY_UP, ord("k")):
-            if focus == "candidates" and candidates:
-                selected = (selected - 1) % len(candidates)
+        if key in (curses.KEY_UP, ord("k")):
+            selected = (selected - 1) % len(rows)
         elif key in (curses.KEY_DOWN, ord("j")):
-            if focus == "candidates" and candidates:
-                selected = (selected + 1) % len(candidates)
-        elif key in (curses.KEY_LEFT, ord("h")):
-            if focus == "actions":
-                action_selected = (action_selected - 1) % len(actions)
-        elif key in (curses.KEY_RIGHT, ord("l")):
-            if focus == "actions":
-                action_selected = (action_selected + 1) % len(actions)
+            selected = (selected + 1) % len(rows)
         elif key in (curses.KEY_ENTER, 10, 13):
-            if focus == "actions":
-                return actions[action_selected][0], selected, action_selected, focus
-            if candidates:
-                return f"path:{selected}", selected, action_selected, focus
+            return rows[selected][0], selected
         elif key in (27, ord("q")):
-            return None, selected, action_selected, focus
+            return None, selected
 
 
 def _set_resolution_curses(stdscr, state: ConfiguratorState) -> str:
