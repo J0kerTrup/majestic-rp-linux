@@ -22,6 +22,7 @@ from ..runtime.proton import build_proton_command
 from ..runtime.multiplayer_repair import MAJESTIC_GTA_ROOT_FILES, analyze_multiplayer_logs, latest_repair_time, multiplayer_roaming_paths
 from ..runtime.tricks import build_win10_plan
 from ..runtime.wine import prepare_wine_mapping
+from .configurator import run_configurator
 from .context import load_context, print_detection
 
 py_platform = importlib.import_module("platform")
@@ -31,6 +32,8 @@ def cmd_config(args: argparse.Namespace) -> int:
     logger = setup_logging(args.debug, Path("logs"))
     path = resolve_config_path(args.config)
     created = ensure_config_file(path, logger)
+    if not args.print_config and sys.stdin.isatty() and sys.stdout.isatty():
+        return run_configurator(path, logger)
     print(f"Config:  {path}")
     print(f"Created: {'yes' if created else 'no'}")
     print(path.read_text(encoding="utf-8"))

@@ -89,8 +89,21 @@ The active config is `$XDG_CONFIG_HOME/majestic-runner/majestic-runner.conf`.
 If `XDG_CONFIG_HOME` is unset, the runner uses
 `~/.config/majestic-runner/majestic-runner.conf`. If the file is missing,
 `config` creates it from `examples/majestic-runner.example.conf`, falling back
-to the built-in template when the example file is not available. Environment
-variables override values from the file.
+to the built-in template when the example file is not available. In an
+interactive terminal, `config` opens the smart TUI configurator immediately.
+The menu can run smart autodetect for the current screen resolution,
+Steam/Proton paths, compatdata, Majestic Launcher, and GTA V installs from
+Steam, Heroic, and Legendary/Epic manifests. If several GTA V installs are
+found, the menu lets you choose which path to persist. The GTA path menu also
+has a separate deep scan for home and mounted drives, so the default startup
+stays fast.
+Environment variables override values from the file.
+
+To print the raw config without opening the TUI:
+
+```bash
+majestic-linux config --print
+```
 
 On first run after upgrading, an existing `majestic-runner.conf` in the current
 project directory is copied to the XDG config path.

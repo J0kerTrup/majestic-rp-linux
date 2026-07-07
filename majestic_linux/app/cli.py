@@ -30,8 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
     purge_parser.add_argument("--include-trash", action="store_true", help="Also remove Majestic entries from the Linux trash")
     purge_parser.add_argument("--include-installers", action="store_true", help="Also remove Majestic installer files from home/download folders")
     purge_parser.add_argument("--include-projects", action="store_true", help="Also remove local majestic-rp-linux project copies/zips")
-    for command in ("doctor", "doctor-radio", "analyze-crash", "config", "detect", "env", "dry-run", "clean"):
+    for command in ("doctor", "doctor-radio", "analyze-crash", "detect", "env", "dry-run", "clean"):
         sub.add_parser(command)
+    config_parser = sub.add_parser("config")
+    config_parser.add_argument("--print", action="store_true", dest="print_config", help="Print config file instead of opening the TUI")
     return parser
 
 

@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import configparser
 import logging
+import os
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.config import RunnerConfig
-from .heroic import heroic_gta_candidates
+from .heroic import heroic_gta_candidates, legendary_gta_candidates
 from .platform import detect_gta_platform, select_platform
 
 MAJESTIC_LOCAL_DIRS = ("MajesticLauncher", "MajesticLauncherGLOBAL")
 MAJESTIC_EXE_NAME = "Majestic Launcher.exe"
+GTA_MARKER_FILES = ("GTA5.exe", "PlayGTAV.exe", "GTAVLauncher.exe")
+GTA_DIR_KEYWORDS = ("gtav", "gta v", "grand theft auto")
+BROAD_GTA_SEARCH_ROOTS = (Path.home(), Path("/mnt"), Path("/media"), Path("/run") / "media" / os.environ.get("USER", ""))
 
 
 def majestic_exe_candidates(compatdata: Path) -> list[Path]:
@@ -78,7 +84,11 @@ def _steam_libraries(steam_root: Path | None) -> list[Path]:
             parts = line.split('"')
             if len(parts) >= 4:
                 libraries.append(Path(parts[3]).expanduser())
-    return list(dict.fromkeys(libraries))
+    return _unique_existing_paths(libraries)
+
+
+def steam_libraries(steam_root: Path | None) -> list[Path]:
+    return _steam_libraries(steam_root)
 
 
 def find_compatdata(config: RunnerConfig, steam_root: Path | None) -> Path | None:
@@ -108,10 +118,15 @@ def find_gta_path(config: RunnerConfig, steam_root: Path | None) -> Path | None:
         return config.gta_path
     if not config.auto_detect:
         return None
-    for library in _steam_libraries(steam_root):
+    return next(iter(gta_path_candidates(steam_root)), None)
+
+
+def gta_path_candidates(steam_root: Path | None, *, deep_scan: bool = False) -> list[Path]:
+    candidates: list[Path] = []
+    libraries = _steam_libraries(steam_root)
+    for library in libraries:
         manifest = library / "steamapps" / "appmanifest_271590.acf"
         install_dir = _manifest_install_dir(manifest) if manifest.exists() else None
-        candidates = []
         if install_dir:
             candidates.append(library / "steamapps" / "common" / install_dir)
         candidates.extend(
@@ -120,13 +135,244 @@ def find_gta_path(config: RunnerConfig, steam_root: Path | None) -> Path | None:
                 library / "steamapps" / "common" / "GTAV",
             ]
         )
-        for path in candidates:
-            if looks_like_gta(path):
-                return path
-    for path in heroic_gta_candidates():
-        if looks_like_gta(path):
-            return path
-    return None
+        candidates.extend(_compatdata_gta_candidates(library / "steamapps" / "compatdata"))
+    candidates.extend(heroic_gta_candidates())
+    candidates.extend(legendary_gta_candidates())
+    candidates.extend(_keyword_gta_candidates(_gta_search_roots(libraries, deep_scan=deep_scan)))
+    return _unique_existing_paths(path for path in candidates if looks_like_gta(path))
+
+
+def _compatdata_gta_candidates(compatdata_root: Path) -> list[Path]:
+    candidates: list[Path] = []
+    if not compatdata_root.exists():
+        return candidates
+    for compatdata in compatdata_root.iterdir():
+        if not compatdata.is_dir():
+            continue
+        drive_c = compatdata / "pfx" / "drive_c"
+        candidates.extend(
+            [
+                drive_c / "Program Files" / "Epic Games" / "GTAV",
+                drive_c / "Program Files (x86)" / "Epic Games" / "GTAV",
+                drive_c / "Program Files" / "Rockstar Games" / "Grand Theft Auto V",
+                drive_c / "Program Files (x86)" / "Rockstar Games" / "Grand Theft Auto V",
+            ]
+        )
+    return candidates
+
+
+def _gta_search_roots(steam_libraries: list[Path], *, deep_scan: bool = False) -> list[Path]:
+    roots: list[Path] = []
+    for library in steam_libraries:
+        roots.append(library / "steamapps" / "common")
+    if deep_scan:
+        for library in steam_libraries:
+            roots.append(library / "steamapps" / "compatdata")
+        roots.extend(BROAD_GTA_SEARCH_ROOTS)
+    roots.extend(
+        [
+            Path.home() / "Games",
+        ]
+    )
+    if deep_scan:
+        roots.extend(
+            [
+                Path.home() / ".local" / "share",
+                Path.home() / ".var" / "app" / "com.heroicgameslauncher.hgl",
+                Path.home() / ".var" / "app" / "com.valvesoftware.Steam",
+            ]
+        )
+    return _unique_existing_paths(roots)
+
+
+def _keyword_gta_candidates(roots: list[Path]) -> list[Path]:
+    candidates: list[Path] = []
+    for root in roots:
+        max_depth = _search_depth(root)
+        found = _find_gta_paths(root, max_depth=max_depth)
+        if found is None:
+            candidates.extend(_find_gta_dirs_by_markers(root, max_depth=max_depth))
+            candidates.extend(_find_gta_dirs_by_keywords(root, max_depth=max_depth))
+        else:
+            candidates.extend(found)
+    common_roots = [
+        Path.home() / "Games",
+        Path.home() / "Games" / "Heroic",
+        Path.home() / "Games" / "legendary",
+        Path.home() / ".local" / "share" / "Steam" / "steamapps" / "common",
+    ]
+    for root in common_roots:
+        candidates.extend([root / "Grand Theft Auto V", root / "GTAV"])
+    return _unique_existing_paths(path for path in candidates if looks_like_gta(path))
+
+
+def _search_depth(root: Path) -> int:
+    if "compatdata" in root.parts:
+        return 9
+    if root == Path.home():
+        return 6
+    if root in {Path("/mnt"), Path("/media")} or root.parts[:2] == ("/", "run"):
+        return 10
+    return 5
+
+
+def _find_gta_dirs_by_markers(root: Path, *, max_depth: int) -> list[Path]:
+    marker_paths = _find_by_name(root, max_depth=max_depth, names=GTA_MARKER_FILES, path_type="f")
+    if marker_paths is not None:
+        return [path.parent for path in marker_paths]
+    found: list[Path] = []
+    for current, dirs, files in os.walk(root):
+        path = Path(current)
+        depth = len(path.relative_to(root).parts)
+        if depth >= max_depth:
+            dirs[:] = []
+        _prune_search_dirs(dirs)
+        if any(marker in files for marker in GTA_MARKER_FILES):
+            found.append(path)
+            dirs[:] = []
+    return found
+
+
+def _find_gta_dirs_by_keywords(root: Path, *, max_depth: int) -> list[Path]:
+    found = _find_by_name(root, max_depth=max_depth, names=GTA_DIR_KEYWORDS, path_type="d", substring=True)
+    if found is not None:
+        return found
+    found: list[Path] = []
+    for current, dirs, _files in os.walk(root):
+        path = Path(current)
+        depth = len(path.relative_to(root).parts)
+        if depth >= max_depth:
+            dirs[:] = []
+        _prune_search_dirs(dirs)
+        for dirname in list(dirs):
+            if _name_looks_like_gta(dirname):
+                found.append(path / dirname)
+    return found
+
+
+def _find_gta_paths(root: Path, *, max_depth: int) -> list[Path] | None:
+    found = _find_by_gta_patterns(root, max_depth=max_depth)
+    if found is None:
+        return None
+    candidates: list[Path] = []
+    for path in found:
+        candidates.append(path.parent if path.is_file() else path)
+    return candidates
+
+
+def _find_by_gta_patterns(root: Path, *, max_depth: int) -> list[Path] | None:
+    find = shutil.which("find")
+    if not find:
+        return None
+    args = [find, str(root), "-maxdepth", str(max_depth)]
+    prune = _find_prune_args()
+    if prune:
+        args.extend(["("])
+        args.extend(prune)
+        args.extend([")", "-prune", "-o"])
+    args.extend(["("])
+    args.extend(["(", "-type", "f", "("])
+    for index, marker in enumerate(GTA_MARKER_FILES):
+        if index:
+            args.append("-o")
+        args.extend(["-iname", marker])
+    args.extend([")", ")"])
+    args.append("-o")
+    args.extend(["(", "-type", "d", "("])
+    for index, keyword in enumerate(GTA_DIR_KEYWORDS):
+        if index:
+            args.append("-o")
+        args.extend(["-iname", f"*{keyword}*"])
+    args.extend([")", ")"])
+    args.extend([")", "-print"])
+    try:
+        proc = subprocess.run(args, check=False, capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode not in {0, 1}:
+        return []
+    return [Path(line).expanduser() for line in proc.stdout.splitlines() if line]
+
+
+def _find_by_name(root: Path, *, max_depth: int, names: tuple[str, ...], path_type: str, substring: bool = False) -> list[Path] | None:
+    find = shutil.which("find")
+    if not find:
+        return None
+    args = [find, str(root), "-maxdepth", str(max_depth)]
+    prune = _find_prune_args()
+    if prune:
+        args.extend(["("])
+        args.extend(prune)
+        args.extend([")", "-prune", "-o"])
+    args.extend(["-type", path_type, "("])
+    for index, name in enumerate(names):
+        if index:
+            args.append("-o")
+        pattern = f"*{name}*" if substring else name
+        args.extend(["-iname", pattern])
+    args.extend([")", "-print"])
+    try:
+        proc = subprocess.run(args, check=False, capture_output=True, text=True, timeout=4)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode not in {0, 1}:
+        return []
+    return [Path(line).expanduser() for line in proc.stdout.splitlines() if line]
+
+
+def _find_prune_args() -> list[str]:
+    args: list[str] = []
+    for index, dirname in enumerate(_ignored_search_dirs()):
+        if index:
+            args.append("-o")
+        args.extend(["-name", dirname])
+    return args
+
+
+def _prune_search_dirs(dirs: list[str]) -> None:
+    ignored = _ignored_search_dirs()
+    dirs[:] = [dirname for dirname in dirs if dirname not in ignored]
+
+
+def _ignored_search_dirs() -> set[str]:
+    return {
+        ".cache",
+        ".cargo",
+        ".gradle",
+        ".npm",
+        ".nvm",
+        ".rustup",
+        ".venv",
+        "__pycache__",
+        "cache",
+        "Cache",
+        "CachedData",
+        "Code Cache",
+        "downloading",
+        "logs",
+        "node_modules",
+        "shadercache",
+        "temp",
+        "tmp",
+    }
+
+
+def _name_looks_like_gta(name: str) -> bool:
+    normalized = name.replace("_", " ").replace("-", " ").lower()
+    return any(keyword in normalized for keyword in GTA_DIR_KEYWORDS)
+
+
+def _unique_existing_paths(paths) -> list[Path]:
+    unique: dict[Path, Path] = {}
+    for path in paths:
+        if path is None or not path.exists():
+            continue
+        try:
+            key = path.resolve()
+        except OSError:
+            key = path.absolute()
+        unique.setdefault(key, path)
+    return list(unique.values())
 
 
 def find_proton(config: RunnerConfig, steam_root: Path | None) -> Path | None:
@@ -155,7 +401,7 @@ def find_majestic_exe(config: RunnerConfig, compatdata: Path | None) -> Path | N
 def looks_like_gta(path: Path | None) -> bool:
     if path is None or not path.exists():
         return False
-    return any((path / name).exists() for name in ("GTA5.exe", "PlayGTAV.exe", "GTAVLauncher.exe"))
+    return any((path / name).exists() for name in GTA_MARKER_FILES)
 
 
 def detect_all(config: RunnerConfig, logger: logging.Logger | None = None) -> DetectionResult:

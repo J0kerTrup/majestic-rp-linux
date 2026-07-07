@@ -1,0 +1,803 @@
+from __future__ import annotations
+
+import curses
+import os
+import re
+import shlex
+import shutil
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+
+from ..core.config import load_config
+from ..core.config_parser import SECTION_PREFIXES
+from ..detection.paths import (
+    DetectionResult,
+    detect_gta_platform,
+    find_compatdata,
+    find_majestic_exe,
+    find_proton,
+    find_steam_root,
+    gta_path_candidates,
+)
+from ..detection.platform import select_platform
+
+
+@dataclass(slots=True)
+class ConfiguratorState:
+    config_path: Path
+    result: DetectionResult
+    gta_candidates: list[Path]
+    resolution: tuple[int, int] | None
+
+
+def run_configurator(config_path: Path, logger) -> int:
+    state = _build_config_state(config_path, logger)
+    _menu_loop(state, logger)
+    return 0
+
+
+def _build_config_state(config_path: Path, logger) -> ConfiguratorState:
+    config = load_config(config_path)
+    gta_path = config.gta_path if config.gta_path and config.gta_path.exists() else None
+    detected = detect_gta_platform(gta_path)
+    selected = select_platform(config.selected_platform, detected, config.platform_explicit, logger)
+    result = DetectionResult(
+        config.steam_root,
+        config.proton_path,
+        config.compatdata_path,
+        gta_path,
+        config.majestic_exe,
+        detected,
+        selected,
+    )
+    resolution = (config.game_width, config.game_height)
+    return ConfiguratorState(config_path, result, [], resolution)
+
+
+def _build_state(config_path: Path, logger) -> ConfiguratorState:
+    config = load_config(config_path)
+    steam_root = find_steam_root(config)
+    candidates = gta_path_candidates(steam_root)
+    compatdata = find_compatdata(config, steam_root)
+    if config.gta_path and config.gta_path.exists():
+        gta_path = config.gta_path
+    else:
+        gta_path = candidates[0] if len(candidates) == 1 else None
+    proton_path = find_proton(config, steam_root)
+    majestic_exe = find_majestic_exe(config, compatdata)
+    detected = detect_gta_platform(gta_path)
+    selected = select_platform(config.selected_platform, detected, config.platform_explicit, logger)
+    result = DetectionResult(steam_root, proton_path, compatdata, gta_path, majestic_exe, detected, selected)
+    return ConfiguratorState(config_path, result, candidates, detect_screen_resolution())
+
+
+def _smart_default_updates(state: ConfiguratorState, logger) -> dict[str, str]:
+    config = load_config(state.config_path)
+    updates: dict[str, str] = {"MAJESTIC_AUTO_DETECT": "1"}
+    if state.resolution:
+        width, height = state.resolution
+        updates["GAME_WIDTH"] = str(width)
+        updates["GAME_HEIGHT"] = str(height)
+    if state.result.steam_root:
+        updates["STEAM_ROOT"] = str(state.result.steam_root)
+    if state.result.compatdata_path:
+        updates["STEAM_COMPAT_DATA_PATH"] = str(state.result.compatdata_path)
+    if state.result.proton_path:
+        updates["PROTON_PATH"] = str(state.result.proton_path)
+    if state.result.majestic_exe:
+        updates["MAJESTIC_EXE"] = str(state.result.majestic_exe)
+    if len(state.gta_candidates) == 1:
+        gta_path = state.gta_candidates[0]
+        updates["GTA_PATH"] = str(gta_path)
+        updates["MAJESTIC_PLATFORM"] = select_platform("auto", detect_gta_platform(gta_path), False, logger)
+    elif config.gta_path and config.gta_path.exists():
+        updates["GTA_PATH"] = str(config.gta_path)
+        updates["MAJESTIC_PLATFORM"] = state.result.selected_platform
+    return updates
+
+
+def _menu_loop(state: ConfiguratorState, logger) -> None:
+    try:
+        curses.wrapper(_curses_menu_loop, state, logger)
+    except curses.error:
+        _plain_menu_loop(state, logger)
+
+
+def _curses_menu_loop(stdscr, state: ConfiguratorState, logger) -> None:
+    curses.curs_set(0)
+    stdscr.keypad(True)
+    _init_curses_colors()
+    message = "Menu loaded. Run smart autodetect when you want to scan paths."
+    while True:
+        state = _build_config_state(state.config_path, logger)
+        choice = _main_menu(stdscr, state, message)
+        if choice is None or choice == "exit":
+            return
+        if choice == "detect":
+            _status_screen(stdscr, "Detecting paths...")
+            state = _build_state(state.config_path, logger)
+            update_config_values(state.config_path, _smart_default_updates(state, logger))
+            if len(state.gta_candidates) > 1 and not state.result.gta_path:
+                message = "Multiple GTA V installs found. Select the GTA V path from the menu."
+            else:
+                message = "Smart defaults applied."
+        elif choice == "gta":
+            message = _select_gta_path_curses(stdscr, state, logger)
+        elif choice == "resolution":
+            message = _set_resolution_curses(stdscr, state)
+        elif choice == "window":
+            message = _toggle_window_mode(state)
+        elif choice == "platform":
+            message = _select_platform_curses(stdscr, state)
+        elif choice == "proton":
+            message = _set_path_value_curses(stdscr, state, "PROTON_PATH", "Path to proton executable")
+        elif choice == "compatdata":
+            message = _set_path_value_curses(stdscr, state, "STEAM_COMPAT_DATA_PATH", "Path to compatdata directory")
+        elif choice == "show":
+            _text_view(stdscr, "Config file", state.config_path.read_text(encoding="utf-8").splitlines())
+            message = ""
+
+
+def _main_menu(stdscr, state: ConfiguratorState, message: str) -> str | None:
+    items = [
+        ("detect", "Apply smart defaults", "Detect resolution and common game/runtime paths"),
+        ("gta", "Select GTA V path", "Choose Steam, Epic/Rockstar prefix, manual path, or deep scan"),
+        ("resolution", "Set screen resolution", "Write GAME_WIDTH and GAME_HEIGHT"),
+        ("window", "Toggle window mode", "Switch GAME_WINDOWED on/off"),
+        ("platform", "Select platform", "auto, steam, egs, or rgl"),
+        ("proton", "Set Proton path", "Manual PROTON_PATH override"),
+        ("compatdata", "Set compatdata prefix", "Manual STEAM_COMPAT_DATA_PATH override"),
+        ("show", "Show config file", "Open the raw config in a scrollable view"),
+        ("exit", "Exit", "Return to shell"),
+    ]
+    selected = 0
+    while True:
+        _draw_main_screen(stdscr, state, message, items, selected)
+        key = stdscr.getch()
+        if key in (curses.KEY_UP, ord("k")):
+            selected = (selected - 1) % len(items)
+        elif key in (curses.KEY_DOWN, ord("j")):
+            selected = (selected + 1) % len(items)
+        elif key in (curses.KEY_ENTER, 10, 13):
+            return items[selected][0]
+        elif key in (27, ord("q")):
+            return None
+
+
+def _draw_main_screen(stdscr, state: ConfiguratorState, message: str, items: list[tuple[str, str, str]], selected: int) -> None:
+    stdscr.erase()
+    height, width = stdscr.getmaxyx()
+    _paint_background(stdscr)
+    box_h = min(height - 2, 24)
+    box_w = min(width - 4, 92)
+    top = max(0, (height - box_h) // 2)
+    left = max(0, (width - box_w) // 2)
+    _draw_box(stdscr, top, left, box_h, box_w, "Majestic Linux Configurator")
+
+    info = [
+        ("Config", str(state.config_path)),
+        ("Resolution", _format_resolution(state.resolution)),
+        ("Steam root", str(state.result.steam_root or "-")),
+        ("Proton", str(state.result.proton_path or "-")),
+        ("Compatdata", str(state.result.compatdata_path or "-")),
+        ("GTA V", str(state.result.gta_path or "-")),
+        ("Majestic Launcher", str(state.result.majestic_exe or "-")),
+        ("Platform", f"{state.result.selected_platform} (detected: {state.result.detected_platform})"),
+    ]
+    y = top + 2
+    for label, value in info:
+        _addstr(stdscr, y, left + 3, f"{label:17}", curses.color_pair(3) | curses.A_BOLD)
+        _addstr(stdscr, y, left + 22, _truncate(value, box_w - 25), curses.color_pair(2))
+        y += 1
+    if message:
+        y += 1
+        _addstr(stdscr, y, left + 3, _truncate(message, box_w - 6), curses.color_pair(4))
+        y += 1
+    y += 1
+    visible_rows = max(1, top + box_h - y - 2)
+    start = max(0, selected - visible_rows + 1)
+    for index, (_action, label, desc) in enumerate(items[start : start + visible_rows], start):
+        attr = curses.color_pair(5) | curses.A_BOLD if index == selected else curses.color_pair(2)
+        marker = ">" if index == selected else " "
+        row = y + index - start
+        line = _truncate(f"{marker} {label:<24} {desc}", box_w - 6)
+        _addstr(stdscr, row, left + 3, line.ljust(box_w - 6), attr)
+    _addstr(stdscr, top + box_h - 2, left + 3, "Up/Down: move  Enter: select  q/Esc: exit", curses.color_pair(6))
+    stdscr.refresh()
+
+
+def _select_gta_path_curses(stdscr, state: ConfiguratorState, logger) -> str:
+    _status_screen(stdscr, "Scanning common GTA paths...")
+    config = load_config(state.config_path)
+    candidates = gta_path_candidates(find_steam_root(config))
+    selected = 0
+    action_selected = 0
+    focus = "candidates"
+    while True:
+        selected = min(selected, max(0, len(candidates) - 1))
+        choice, selected, action_selected, focus = _select_gta_dialog(stdscr, candidates, selected, action_selected, focus)
+        if choice is None or choice == "back":
+            return "Selection cancelled."
+        if choice == "deep":
+            _status_screen(stdscr, "Deep scanning home and mounted drives...")
+            candidates = gta_path_candidates(find_steam_root(config), deep_scan=True)
+            selected = 0
+            focus = "candidates" if candidates else "actions"
+            continue
+        if choice == "manual":
+            raw = _prompt(stdscr, "Manual GTA V path", "Path", "")
+            if raw is None:
+                return "Selection cancelled."
+            path = Path(raw).expanduser()
+        else:
+            path = candidates[int(choice.split(":", 1)[1])]
+        if not path.exists():
+            return f"Path does not exist: {path}"
+        platform = select_platform("auto", detect_gta_platform(path), False, logger)
+        update_config_values(state.config_path, {"GTA_PATH": str(path), "MAJESTIC_PLATFORM": platform})
+        return f"GTA V path saved: {path}"
+
+
+def _select_gta_dialog(
+    stdscr,
+    candidates: list[Path],
+    selected: int,
+    action_selected: int,
+    focus: str,
+) -> tuple[str | None, int, int, str]:
+    actions = [("deep", "Deep scan"), ("manual", "Manual path"), ("back", "Back")]
+    if not candidates:
+        focus = "actions"
+    while True:
+        stdscr.erase()
+        _paint_background(stdscr)
+        height, width = stdscr.getmaxyx()
+        detail_height = 5 if height >= 18 else 0
+        action_height = 4
+        box_h = min(height - 2, max(12, min(len(candidates) + detail_height + action_height + 6, height - 2)))
+        box_w = min(width - 4, 92)
+        top = max(0, (height - box_h) // 2)
+        left = max(0, (width - box_w) // 2)
+        _draw_box(stdscr, top, left, box_h, box_w, "Select GTA V path")
+
+        list_top = top + 3
+        detail_top = top + box_h - detail_height - action_height - 1 if detail_height else top + box_h - action_height - 1
+        list_bottom = max(list_top, detail_top - 1)
+        visible = max(1, list_bottom - list_top)
+        _addstr(stdscr, top + 2, left + 3, "Detected installs", curses.color_pair(3) | curses.A_BOLD)
+        if candidates:
+            start = max(0, selected - visible + 1)
+            for index, path in enumerate(candidates[start : start + visible], start):
+                attr = curses.color_pair(5) | curses.A_BOLD if focus == "candidates" and index == selected else curses.color_pair(2)
+                marker = ">" if focus == "candidates" and index == selected else " "
+                platform = detect_gta_platform(path)
+                line = _truncate(f"{marker} {_compact_path_label(str(path)):<38} {platform}", box_w - 6)
+                _addstr(stdscr, list_top + index - start, left + 3, line.ljust(box_w - 6), attr)
+        else:
+            _addstr(stdscr, list_top, left + 3, "No GTA V candidates found. Use Deep scan or Manual path.", curses.color_pair(4))
+
+        if detail_height:
+            _addstr(stdscr, detail_top, left + 3, "Selected install", curses.color_pair(3) | curses.A_BOLD)
+            _addstr(stdscr, detail_top + 1, left + 3, "-" * (box_w - 6), curses.color_pair(6))
+            selected_text = str(candidates[selected]) + f"  {detect_gta_platform(candidates[selected])}" if candidates else "-"
+            detail_lines = _wrap_text(selected_text, box_w - 6, detail_height - 3)
+            for index in range(detail_height - 3):
+                _addstr(stdscr, detail_top + 2 + index, left + 3, " " * (box_w - 6), curses.color_pair(2))
+            for index, line in enumerate(detail_lines):
+                _addstr(stdscr, detail_top + 2 + index, left + 3, line, curses.color_pair(2))
+
+        action_top = top + box_h - action_height
+        _addstr(stdscr, action_top, left + 3, "Actions", curses.color_pair(3) | curses.A_BOLD)
+        action_x = left + 3
+        for index, (_value, label) in enumerate(actions):
+            attr = curses.color_pair(5) | curses.A_BOLD if focus == "actions" and index == action_selected else curses.color_pair(2)
+            text = f" {label} "
+            _addstr(stdscr, action_top + 1, action_x, text, attr)
+            action_x += len(text) + 2
+        _addstr(stdscr, top + box_h - 2, left + 3, "Up/Down: installs  Tab: actions  Enter: select  Esc: back", curses.color_pair(6))
+        stdscr.refresh()
+
+        key = stdscr.getch()
+        if key in (9,):
+            focus = "actions" if focus == "candidates" else ("candidates" if candidates else "actions")
+        elif key in (curses.KEY_UP, ord("k")):
+            if focus == "candidates" and candidates:
+                selected = (selected - 1) % len(candidates)
+        elif key in (curses.KEY_DOWN, ord("j")):
+            if focus == "candidates" and candidates:
+                selected = (selected + 1) % len(candidates)
+        elif key in (curses.KEY_LEFT, ord("h")):
+            if focus == "actions":
+                action_selected = (action_selected - 1) % len(actions)
+        elif key in (curses.KEY_RIGHT, ord("l")):
+            if focus == "actions":
+                action_selected = (action_selected + 1) % len(actions)
+        elif key in (curses.KEY_ENTER, 10, 13):
+            if focus == "actions":
+                return actions[action_selected][0], selected, action_selected, focus
+            if candidates:
+                return f"path:{selected}", selected, action_selected, focus
+        elif key in (27, ord("q")):
+            return None, selected, action_selected, focus
+
+
+def _set_resolution_curses(stdscr, state: ConfiguratorState) -> str:
+    raw = _prompt(stdscr, "Screen resolution", "Resolution (WIDTHxHEIGHT)", _format_resolution(state.resolution))
+    if raw is None:
+        return "Resolution was not changed."
+    match = re.fullmatch(r"(\d{3,5})\s*x\s*(\d{3,5})", raw.strip().lower())
+    if not match:
+        return "Resolution was not changed."
+    width, height = int(match.group(1)), int(match.group(2))
+    update_config_values(state.config_path, {"GAME_WIDTH": str(width), "GAME_HEIGHT": str(height)})
+    return f"Resolution saved: {width}x{height}"
+
+
+def _select_platform_curses(stdscr, state: ConfiguratorState) -> str:
+    options = [("auto", "auto", "Let the runner decide"), ("steam", "steam", "Force Steam"), ("egs", "egs", "Force Epic Games"), ("rgl", "rgl", "Force Rockstar Games Launcher")]
+    choice = _select_dialog(stdscr, "Platform", options, 0)
+    if choice is None:
+        return "Platform was not changed."
+    update_config_values(state.config_path, {"MAJESTIC_PLATFORM": choice})
+    return f"Platform saved: {choice}"
+
+
+def _set_path_value_curses(stdscr, state: ConfiguratorState, key: str, prompt: str) -> str:
+    raw = _prompt(stdscr, key, prompt, "")
+    if raw is None:
+        return f"{key} was not changed."
+    if not raw.strip():
+        update_config_values(state.config_path, {key: ""})
+        return f"{key} cleared."
+    path = Path(raw.strip()).expanduser()
+    if not path.exists():
+        confirm = _select_dialog(stdscr, "Path does not exist", [("no", "No", "Do not save"), ("yes", "Yes", "Save anyway")], 0)
+        if confirm != "yes":
+            return f"{key} was not changed."
+    update_config_values(state.config_path, {key: str(path)})
+    return f"{key} saved."
+
+
+def _select_dialog(stdscr, title: str, items: list[tuple[str, str, str]], selected: int = 0) -> str | None:
+    if not items:
+        return None
+    while True:
+        stdscr.erase()
+        _paint_background(stdscr)
+        height, width = stdscr.getmaxyx()
+        detail_height = 5 if height >= 18 else 0
+        box_h = min(height - 2, max(9, min(len(items) + detail_height + 5, height - 2)))
+        box_w = min(width - 4, 88)
+        top = max(0, (height - box_h) // 2)
+        left = max(0, (width - box_w) // 2)
+        _draw_box(stdscr, top, left, box_h, box_w, title)
+        visible = max(1, box_h - detail_height - 4)
+        start = max(0, selected - visible + 1)
+        for index, (_value, label, desc) in enumerate(items[start : start + visible], start):
+            attr = curses.color_pair(5) | curses.A_BOLD if index == selected else curses.color_pair(2)
+            marker = ">" if index == selected else " "
+            row = top + 2 + index - start
+            display_label = _compact_path_label(label) if "/" in label else label
+            line = _truncate(f"{marker} {display_label:<34} {desc}", box_w - 6)
+            _addstr(stdscr, row, left + 3, line.ljust(box_w - 6), attr)
+        if detail_height:
+            detail_top = top + box_h - detail_height - 1
+            _addstr(stdscr, detail_top, left + 3, "Selected", curses.color_pair(3) | curses.A_BOLD)
+            _addstr(stdscr, detail_top + 1, left + 3, "-" * (box_w - 6), curses.color_pair(6))
+            _value, label, desc = items[selected]
+            detail_lines = _wrap_text(f"{label}  {desc}".strip(), box_w - 6, detail_height - 3)
+            for index in range(detail_height - 3):
+                _addstr(stdscr, detail_top + 2 + index, left + 3, " " * (box_w - 6), curses.color_pair(2))
+            for index, line in enumerate(detail_lines):
+                _addstr(stdscr, detail_top + 2 + index, left + 3, line, curses.color_pair(2))
+        _addstr(stdscr, top + box_h - 2, left + 3, "Up/Down: move  Enter: select  Esc: back", curses.color_pair(6))
+        stdscr.refresh()
+        key = stdscr.getch()
+        if key in (curses.KEY_UP, ord("k")):
+            selected = (selected - 1) % len(items)
+        elif key in (curses.KEY_DOWN, ord("j")):
+            selected = (selected + 1) % len(items)
+        elif key in (curses.KEY_ENTER, 10, 13):
+            return items[selected][0]
+        elif key in (27, ord("q")):
+            return None
+
+
+def _prompt(stdscr, title: str, prompt: str, initial: str = "") -> str | None:
+    curses.curs_set(1)
+    curses.echo()
+    try:
+        stdscr.erase()
+        _paint_background(stdscr)
+        height, width = stdscr.getmaxyx()
+        box_h, box_w = 8, min(width - 4, 76)
+        top = max(0, (height - box_h) // 2)
+        left = max(0, (width - box_w) // 2)
+        _draw_box(stdscr, top, left, box_h, box_w, title)
+        _addstr(stdscr, top + 2, left + 3, _truncate(prompt, box_w - 6), curses.color_pair(2))
+        _addstr(stdscr, top + 4, left + 3, _truncate(initial, box_w - 6).ljust(box_w - 6), curses.color_pair(7))
+        _addstr(stdscr, top + box_h - 2, left + 3, "Enter value, leave empty to cancel", curses.color_pair(6))
+        stdscr.move(top + 4, left + 3 + min(len(initial), box_w - 6))
+        stdscr.refresh()
+        raw = stdscr.getstr(top + 4, left + 3, box_w - 6).decode("utf-8", errors="ignore").strip()
+        return raw or None
+    finally:
+        curses.noecho()
+        curses.curs_set(0)
+
+
+def _text_view(stdscr, title: str, lines: list[str]) -> None:
+    offset = 0
+    while True:
+        stdscr.erase()
+        _paint_background(stdscr)
+        height, width = stdscr.getmaxyx()
+        box_h = height - 2
+        box_w = width - 4
+        top, left = 1, 2
+        _draw_box(stdscr, top, left, box_h, box_w, title)
+        visible = max(1, box_h - 4)
+        offset = min(offset, max(0, len(lines) - visible))
+        for index, line in enumerate(lines[offset : offset + visible]):
+            _addstr(stdscr, top + 2 + index, left + 3, _truncate(line, box_w - 6), curses.color_pair(2))
+        _addstr(stdscr, top + box_h - 2, left + 3, "Up/Down/PgUp/PgDn: scroll  Esc/q: back", curses.color_pair(6))
+        stdscr.refresh()
+        key = stdscr.getch()
+        if key in (curses.KEY_UP, ord("k")):
+            offset = max(0, offset - 1)
+        elif key in (curses.KEY_DOWN, ord("j")):
+            offset = min(max(0, len(lines) - visible), offset + 1)
+        elif key == curses.KEY_PPAGE:
+            offset = max(0, offset - visible)
+        elif key == curses.KEY_NPAGE:
+            offset = min(max(0, len(lines) - visible), offset + visible)
+        elif key in (27, ord("q")):
+            return
+
+
+def _message_box(stdscr, title: str, lines: list[str]) -> None:
+    _status_screen(stdscr, title, lines)
+    stdscr.getch()
+
+
+def _status_screen(stdscr, title: str, lines: list[str] | None = None) -> None:
+    stdscr.erase()
+    _paint_background(stdscr)
+    height, width = stdscr.getmaxyx()
+    box_h, box_w = 7, min(width - 4, 70)
+    top = max(0, (height - box_h) // 2)
+    left = max(0, (width - box_w) // 2)
+    _draw_box(stdscr, top, left, box_h, box_w, title)
+    for index, line in enumerate(lines or ["Please wait..."]):
+        _addstr(stdscr, top + 2 + index, left + 3, _truncate(line, box_w - 6), curses.color_pair(2))
+    stdscr.refresh()
+
+
+def _init_curses_colors() -> None:
+    curses.start_color()
+    curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(3, curses.COLOR_CYAN, curses.COLOR_BLACK)
+    curses.init_pair(4, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_CYAN)
+    curses.init_pair(6, curses.COLOR_BLUE, curses.COLOR_BLACK)
+    curses.init_pair(7, curses.COLOR_BLACK, curses.COLOR_WHITE)
+
+
+def _paint_background(stdscr) -> None:
+    stdscr.bkgd(" ", curses.color_pair(1))
+
+
+def _draw_box(stdscr, top: int, left: int, height: int, width: int, title: str) -> None:
+    win = stdscr.derwin(height, width, top, left)
+    win.bkgd(" ", curses.color_pair(2))
+    win.attron(curses.color_pair(3))
+    win.box()
+    win.attroff(curses.color_pair(3))
+    if title:
+        win.addstr(0, 2, f" {title} ", curses.color_pair(3) | curses.A_BOLD)
+
+
+def _addstr(stdscr, y: int, x: int, text: str, attr: int = 0) -> None:
+    height, width = stdscr.getmaxyx()
+    if y < 0 or y >= height or x < 0 or x >= width:
+        return
+    stdscr.addstr(y, x, text[: max(0, width - x - 1)], attr)
+
+
+def _truncate(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    if len(text) <= width:
+        return text
+    if width <= 3:
+        return text[:width]
+    return text[: width - 3] + "..."
+
+
+def _compact_path_label(text: str) -> str:
+    path = Path(text)
+    name = path.name or text
+    parent = path.parent.name
+    return f"{parent}/{name}" if parent and parent != "." else name
+
+
+def _wrap_text(text: str, width: int, max_lines: int) -> list[str]:
+    if width <= 0 or max_lines <= 0:
+        return []
+    words = text.split()
+    if not words:
+        return [""]
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        chunks = [word[index : index + width] for index in range(0, len(word), width)] or [word]
+        for chunk in chunks:
+            candidate = chunk if not current else f"{current} {chunk}"
+            if len(candidate) <= width:
+                current = candidate
+                continue
+            lines.append(current)
+            current = chunk
+            if len(lines) >= max_lines:
+                return _ellipsize_last_line(lines, width)
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    return _ellipsize_last_line(lines[:max_lines], width) if len(lines) >= max_lines and words else lines
+
+
+def _ellipsize_last_line(lines: list[str], width: int) -> list[str]:
+    if not lines:
+        return lines
+    if len(lines[-1]) >= width and width > 3:
+        lines[-1] = lines[-1][: width - 3] + "..."
+    return lines
+
+
+def _plain_menu_loop(state: ConfiguratorState, logger) -> None:
+    message = "Menu loaded. Run smart autodetect when you want to scan paths."
+    while True:
+        _clear_screen()
+        state = _build_config_state(state.config_path, logger)
+        print("Majestic Linux Configurator")
+        print("=" * 28)
+        print(f"Config:            {state.config_path}")
+        print(f"Resolution:        {_format_resolution(state.resolution)}")
+        print(f"Steam root:        {state.result.steam_root or '-'}")
+        print(f"Proton:            {state.result.proton_path or '-'}")
+        print(f"Compatdata:        {state.result.compatdata_path or '-'}")
+        print(f"GTA V:             {state.result.gta_path or '-'}")
+        print(f"Majestic Launcher: {state.result.majestic_exe or '-'}")
+        print(f"Platform:          {state.result.selected_platform} (detected: {state.result.detected_platform})")
+        print()
+        if message:
+            print(message)
+            print()
+        print("1. Apply smart defaults again")
+        print("2. Select GTA V path")
+        print("3. Set screen resolution")
+        print("4. Toggle window mode")
+        print("5. Select platform")
+        print("6. Set Proton path")
+        print("7. Set compatdata prefix")
+        print("8. Show config file")
+        print("0. Exit")
+        choice = input("> ").strip().lower()
+        if choice == "1":
+            print("Detecting...")
+            state = _build_state(state.config_path, logger)
+            update_config_values(state.config_path, _smart_default_updates(state, logger))
+            if len(state.gta_candidates) > 1 and not state.result.gta_path:
+                message = "Multiple GTA V installs found. Select the GTA V path from the menu."
+            else:
+                message = "Smart defaults applied."
+        elif choice == "2":
+            message = _select_gta_path(state, logger)
+        elif choice == "3":
+            message = _set_resolution(state)
+        elif choice == "4":
+            message = _toggle_window_mode(state)
+        elif choice == "5":
+            message = _select_platform(state)
+        elif choice == "6":
+            message = _set_path_value(state, "PROTON_PATH", "Path to proton executable")
+        elif choice == "7":
+            message = _set_path_value(state, "STEAM_COMPAT_DATA_PATH", "Path to compatdata directory")
+        elif choice == "8":
+            _show_config(state.config_path)
+            message = ""
+        elif choice in {"0", "q", "quit", "exit"}:
+            return
+        else:
+            message = "Unknown menu item."
+
+
+def _select_gta_path(state: ConfiguratorState, logger) -> str:
+    config = load_config(state.config_path)
+    candidates = gta_path_candidates(find_steam_root(config))
+    while True:
+        _clear_screen()
+        print("Select GTA V path")
+        print("=" * 17)
+        if candidates:
+            for index, path in enumerate(candidates, 1):
+                platform = detect_gta_platform(path)
+                print(f"{index}. {path} [{platform}]")
+        else:
+            print("No GTA V candidates were found automatically.")
+        print("d. Deep scan home and mounted drives")
+        print("m. Enter path manually")
+        print("0. Back")
+        choice = input("> ").strip().lower()
+        if choice == "d":
+            print("Scanning...")
+            config = load_config(state.config_path)
+            candidates = gta_path_candidates(find_steam_root(config), deep_scan=True)
+            continue
+        break
+    if choice == "0":
+        return "Selection cancelled."
+    if choice == "m":
+        raw = input("GTA V path: ").strip()
+        path = Path(raw).expanduser()
+    else:
+        try:
+            path = candidates[int(choice) - 1]
+        except (ValueError, IndexError):
+            return "Invalid GTA V selection."
+    if not path.exists():
+        return f"Path does not exist: {path}"
+    platform = select_platform("auto", detect_gta_platform(path), False, logger)
+    update_config_values(state.config_path, {"GTA_PATH": str(path), "MAJESTIC_PLATFORM": platform})
+    return f"GTA V path saved: {path}"
+
+
+def _set_resolution(state: ConfiguratorState) -> str:
+    detected = _format_resolution(state.resolution)
+    print(f"Detected resolution: {detected}")
+    raw = input("Resolution (WIDTHxHEIGHT): ").strip().lower()
+    match = re.fullmatch(r"(\d{3,5})\s*x\s*(\d{3,5})", raw)
+    if not match:
+        return "Resolution was not changed."
+    width, height = int(match.group(1)), int(match.group(2))
+    update_config_values(state.config_path, {"GAME_WIDTH": str(width), "GAME_HEIGHT": str(height)})
+    return f"Resolution saved: {width}x{height}"
+
+
+def _toggle_window_mode(state: ConfiguratorState) -> str:
+    config = load_config(state.config_path)
+    windowed = not config.game_windowed
+    updates = {"GAME_WINDOWED": _bool_value(windowed)}
+    if not windowed:
+        updates["GAME_BORDERLESS"] = "0"
+    else:
+        updates["GAME_BORDERLESS"] = _bool_value(config.game_borderless)
+    update_config_values(state.config_path, updates)
+    return f"Windowed mode: {'enabled' if windowed else 'disabled'}"
+
+
+def _select_platform(state: ConfiguratorState) -> str:
+    options = ["auto", "steam", "egs", "rgl"]
+    print("Platform:")
+    for index, option in enumerate(options, 1):
+        print(f"{index}. {option}")
+    choice = input("> ").strip().lower()
+    if choice in options:
+        platform = choice
+    else:
+        try:
+            platform = options[int(choice) - 1]
+        except (ValueError, IndexError):
+            return "Platform was not changed."
+    update_config_values(state.config_path, {"MAJESTIC_PLATFORM": platform})
+    return f"Platform saved: {platform}"
+
+
+def _set_path_value(state: ConfiguratorState, key: str, prompt: str) -> str:
+    raw = input(f"{prompt}: ").strip()
+    if not raw:
+        update_config_values(state.config_path, {key: ""})
+        return f"{key} cleared."
+    path = Path(raw).expanduser()
+    if not path.exists():
+        confirm = input(f"Path does not exist: {path}\nSave anyway? [y/N] ").strip().lower()
+        if confirm not in {"y", "yes"}:
+            return f"{key} was not changed."
+    update_config_values(state.config_path, {key: str(path)})
+    return f"{key} saved."
+
+
+def _show_config(path: Path) -> None:
+    _clear_screen()
+    print(path.read_text(encoding="utf-8"))
+    input("\nPress Enter to return to menu.")
+
+
+def detect_screen_resolution() -> tuple[int, int] | None:
+    for env_width, env_height in (("GAMESCOPE_WIDTH", "GAMESCOPE_HEIGHT"), ("GAME_WIDTH", "GAME_HEIGHT")):
+        width = _int_env(env_width)
+        height = _int_env(env_height)
+        if width and height:
+            return width, height
+    xrandr = shutil.which("xrandr")
+    if xrandr:
+        try:
+            proc = subprocess.run([xrandr, "--current"], check=False, capture_output=True, text=True, timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            proc = None
+        if proc and proc.returncode == 0:
+            for line in proc.stdout.splitlines():
+                match = re.search(r"\b(\d{3,5})x(\d{3,5})\b[^\n]*\*", line)
+                if match:
+                    return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def update_config_values(path: Path, updates: dict[str, str]) -> None:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    remaining = dict(updates)
+    section = ""
+    output: list[str] = []
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped[1:-1].strip().lower()
+            output.append(raw_line)
+            continue
+        key = _line_config_key(raw_line, section)
+        if key in remaining:
+            output.append(f"{_line_key_name(raw_line)}={_quote_config_value(remaining.pop(key))}")
+        else:
+            output.append(raw_line)
+    if remaining:
+        if output and output[-1].strip():
+            output.append("")
+        output.append("# Values written by majestic-linux config.")
+        for key, value in remaining.items():
+            output.append(f"{key}={_quote_config_value(value)}")
+    path.write_text("\n".join(output) + "\n", encoding="utf-8")
+
+
+def _line_config_key(line: str, section: str) -> str | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        return None
+    key = stripped.split("=", 1)[0].strip()
+    return SECTION_PREFIXES.get(section, "") + key.upper() if section else key.upper()
+
+
+def _line_key_name(line: str) -> str:
+    return line.split("=", 1)[0].strip()
+
+
+def _quote_config_value(value: str) -> str:
+    if value == "":
+        return ""
+    if re.search(r"\s|#|\"|'", value):
+        return shlex.quote(value)
+    return value
+
+
+def _format_resolution(resolution: tuple[int, int] | None) -> str:
+    return f"{resolution[0]}x{resolution[1]}" if resolution else "not detected"
+
+
+def _int_env(name: str) -> int | None:
+    value = os.environ.get(name)
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _bool_value(value: bool) -> str:
+    return "1" if value else "0"
+
+
+def _clear_screen() -> None:
+    if os.environ.get("TERM"):
+        print("\033[2J\033[H", end="")
