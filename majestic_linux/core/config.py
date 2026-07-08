@@ -53,6 +53,7 @@ class RunnerConfig:
     app_id: str = "271590"
     dry_run: bool = False
     auto_detect: bool = True
+    auto_patch_launcher: bool = True
     log_level: str = "INFO"
     log_dir: Path = field(default_factory=default_log_dir)
     graceful_shutdown: bool = True
@@ -116,6 +117,7 @@ def load_config(config_path: Path | str | None = None, *, dry_run: bool | None =
         app_id=values.get("APP_ID") or "271590",
         dry_run=parse_bool(values.get("DRY_RUN"), False),
         auto_detect=parse_bool(values.get("MAJESTIC_AUTO_DETECT"), True),
+        auto_patch_launcher=parse_bool(values.get("MAJESTIC_AUTO_PATCH_LAUNCHER"), True),
         log_level=values.get("MAJESTIC_LOG_LEVEL", "INFO").strip().upper() or "INFO",
         log_dir=parse_path(values.get("MAJESTIC_LOG_DIR")) or default_log_dir(),
         graceful_shutdown=parse_bool(values.get("SHUTDOWN_GRACEFUL_SHUTDOWN"), True),
@@ -139,6 +141,7 @@ def config_summary(config: RunnerConfig) -> dict[str, object]:
         "platform_explicit": config.platform_explicit,
         "dry_run": config.dry_run,
         "auto_detect": config.auto_detect,
+        "auto_patch_launcher": config.auto_patch_launcher,
         "log_level": config.log_level,
         "log_dir": str(config.log_dir),
         "kill_wine_on_exit": config.kill_wine_on_exit,

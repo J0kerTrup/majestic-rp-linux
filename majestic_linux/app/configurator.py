@@ -129,6 +129,8 @@ def _curses_menu_loop(stdscr, state: ConfiguratorState, logger) -> None:
             message = _set_resolution_curses(stdscr, state)
         elif choice == "window":
             message = _toggle_window_mode(state)
+        elif choice == "autopatch":
+            message = _toggle_bool_value(state, "MAJESTIC_AUTO_PATCH_LAUNCHER", "Launcher auto-patch")
         elif choice == "platform":
             message = _select_platform_curses(stdscr, state)
         elif choice == "proton":
@@ -148,6 +150,7 @@ def _main_menu(stdscr, state: ConfiguratorState, message: str) -> str | None:
         ("gta", "Select GTA V path", "Choose Steam, Epic/Rockstar prefix, manual path, or deep scan"),
         ("resolution", "Set screen resolution", "Write GAME_WIDTH and GAME_HEIGHT"),
         ("window", "Toggle window mode", "Switch GAME_WINDOWED on/off"),
+        ("autopatch", "Toggle launcher auto-patch", "Patch launcher again after launcher updates"),
         ("platform", "Select platform", "auto, steam, egs, or rgl"),
         ("proton", "Select Proton/Wine path", "Choose Steam Proton, GE-Proton, Wine-GE, or manual path"),
         ("compatdata", "Set compatdata prefix", "Manual STEAM_COMPAT_DATA_PATH override"),
@@ -188,6 +191,7 @@ def _draw_main_screen(stdscr, state: ConfiguratorState, message: str, items: lis
         ("GTA V", str(state.result.gta_path or "-")),
         ("Majestic Launcher", str(state.result.majestic_exe or "-")),
         ("Platform", f"{state.result.selected_platform} (detected: {state.result.detected_platform})"),
+        ("Auto-patch", "enabled" if load_config(state.config_path).auto_patch_launcher else "disabled"),
         ("Logs", str(load_config(state.config_path).log_dir)),
     ]
     y = top + 2
@@ -688,6 +692,7 @@ def _plain_menu_loop(state: ConfiguratorState, logger) -> None:
         print(f"GTA V:             {state.result.gta_path or '-'}")
         print(f"Majestic Launcher: {state.result.majestic_exe or '-'}")
         print(f"Platform:          {state.result.selected_platform} (detected: {state.result.detected_platform})")
+        print(f"Auto-patch:        {'enabled' if load_config(state.config_path).auto_patch_launcher else 'disabled'}")
         print(f"Logs:              {load_config(state.config_path).log_dir}")
         print()
         if message:
@@ -697,11 +702,12 @@ def _plain_menu_loop(state: ConfiguratorState, logger) -> None:
         print("2. Select GTA V path")
         print("3. Set screen resolution")
         print("4. Toggle window mode")
-        print("5. Select platform")
-        print("6. Set Proton path")
-        print("7. Set compatdata prefix")
-        print("8. Set logs directory")
-        print("9. Show config file")
+        print("5. Toggle launcher auto-patch")
+        print("6. Select platform")
+        print("7. Set Proton path")
+        print("8. Set compatdata prefix")
+        print("9. Set logs directory")
+        print("10. Show config file")
         print("0. Exit")
         choice = input("> ").strip().lower()
         if choice == "1":
@@ -719,14 +725,16 @@ def _plain_menu_loop(state: ConfiguratorState, logger) -> None:
         elif choice == "4":
             message = _toggle_window_mode(state)
         elif choice == "5":
-            message = _select_platform(state)
+            message = _toggle_bool_value(state, "MAJESTIC_AUTO_PATCH_LAUNCHER", "Launcher auto-patch")
         elif choice == "6":
-            message = _set_path_value(state, "PROTON_PATH", "Path to proton executable")
+            message = _select_platform(state)
         elif choice == "7":
-            message = _set_path_value(state, "STEAM_COMPAT_DATA_PATH", "Path to compatdata directory")
+            message = _set_path_value(state, "PROTON_PATH", "Path to proton executable")
         elif choice == "8":
-            message = _set_path_value(state, "MAJESTIC_LOG_DIR", "Directory for runner logs")
+            message = _set_path_value(state, "STEAM_COMPAT_DATA_PATH", "Path to compatdata directory")
         elif choice == "9":
+            message = _set_path_value(state, "MAJESTIC_LOG_DIR", "Directory for runner logs")
+        elif choice == "10":
             _show_config(state.config_path)
             message = ""
         elif choice in {"0", "q", "quit", "exit"}:
@@ -797,6 +805,14 @@ def _toggle_window_mode(state: ConfiguratorState) -> str:
         updates["GAME_BORDERLESS"] = _bool_value(config.game_borderless)
     update_config_values(state.config_path, updates)
     return f"Windowed mode: {'enabled' if windowed else 'disabled'}"
+
+
+def _toggle_bool_value(state: ConfiguratorState, key: str, label: str) -> str:
+    config = load_config(state.config_path)
+    current = config.auto_patch_launcher if key == "MAJESTIC_AUTO_PATCH_LAUNCHER" else False
+    enabled = not current
+    update_config_values(state.config_path, {key: _bool_value(enabled)})
+    return f"{label}: {'enabled' if enabled else 'disabled'}"
 
 
 def _select_platform(state: ConfiguratorState) -> str:

@@ -121,6 +121,7 @@ Most users should leave paths empty and let auto-detection do the work:
 ```ini
 MAJESTIC_PLATFORM=auto
 MAJESTIC_AUTO_DETECT=1
+MAJESTIC_AUTO_PATCH_LAUNCHER=1
 MAJESTIC_PROTON_NATIVE_PLATFORM=
 APP_ID=271590
 STEAM_ROOT=
@@ -197,6 +198,10 @@ wheel_error_threshold=25
 There is no persistent `[radio]` config anymore. Radio tooling is diagnostic and
 is enabled only by `doctor-radio`, `run --radio-safe`, or
 `run --disable-winegstreamer`.
+
+When `MAJESTIC_AUTO_PATCH_LAUNCHER=1`, `run` checks whether Majestic Launcher
+files changed after setup and automatically reapplies the JS patch when the
+launcher updates.
 
 ## Launch Flow
 
