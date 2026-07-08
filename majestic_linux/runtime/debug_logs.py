@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from subprocess import Popen
 
+from ..core.config_file import default_log_dir
+
 LOG_FILES = ("steam.log", "proton.log", "wine.log", "launcher.log", "game.log", "system.log", "journal.log", "dxvk.log", "vulkan.log")
 MAX_RUN_LOGS = 30
 
@@ -28,8 +30,8 @@ class DebugLogSession:
         return self.run_dir / name
 
 
-def start_debug_log_session(*, logger: logging.Logger | None = None) -> DebugLogSession:
-    root = Path("logs").resolve()
+def start_debug_log_session(*, root: Path | None = None, logger: logging.Logger | None = None) -> DebugLogSession:
+    root = (root or default_log_dir()).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     now = datetime.now()
     run_dir = root / now.strftime("%Y-%m-%d_%H-%M-%S")

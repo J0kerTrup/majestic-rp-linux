@@ -380,6 +380,10 @@ def find_proton(config: RunnerConfig, steam_root: Path | None) -> Path | None:
         return config.proton_path
     if not config.auto_detect:
         return None
+    return next(iter(proton_path_candidates(steam_root)), None)
+
+
+def proton_path_candidates(steam_root: Path | None, *, include_wine: bool = True) -> list[Path]:
     candidates: list[Path] = []
     for library in _steam_libraries(steam_root):
         common = library / "steamapps" / "common"
@@ -390,8 +394,50 @@ def find_proton(config: RunnerConfig, steam_root: Path | None) -> Path | None:
             ]
         )
         candidates.extend(sorted(common.glob("GE-Proton*/proton"), reverse=True))
+        candidates.extend(sorted(common.glob("Proton-GE*/proton"), reverse=True))
         candidates.extend(sorted(common.glob("*Proton*/proton"), reverse=True))
-    return next((path for path in candidates if path.exists()), None)
+    for root in _proton_tool_roots(steam_root):
+        candidates.extend(sorted(root.glob("GE-Proton*/proton"), reverse=True))
+        candidates.extend(sorted(root.glob("Proton-GE*/proton"), reverse=True))
+        candidates.extend(sorted(root.glob("*Proton*/proton"), reverse=True))
+        candidates.extend(sorted(root.glob("proton*/proton"), reverse=True))
+        if include_wine:
+            candidates.extend(sorted(root.glob("Wine-GE*/bin/wine"), reverse=True))
+            candidates.extend(sorted(root.glob("wine-ge*/bin/wine"), reverse=True))
+            candidates.extend(sorted(root.glob("*Wine*/bin/wine"), reverse=True))
+            candidates.extend(sorted(root.glob("*wine*/bin/wine"), reverse=True))
+    if include_wine:
+        for name in ("wine", "wine64"):
+            wine = shutil.which(name)
+            if wine:
+                candidates.append(Path(wine))
+    return _unique_existing_paths(path for path in candidates if path.is_file())
+
+
+def _proton_tool_roots(steam_root: Path | None) -> list[Path]:
+    roots: list[Path] = []
+    for library in _steam_libraries(steam_root):
+        roots.extend(
+            [
+                library / "compatibilitytools.d",
+                library / "steamapps" / "compatibilitytools.d",
+                library / "steamapps" / "common",
+            ]
+        )
+    roots.extend(
+        [
+            Path.home() / ".steam" / "root" / "compatibilitytools.d",
+            Path.home() / ".steam" / "steam" / "compatibilitytools.d",
+            Path.home() / ".local" / "share" / "Steam" / "compatibilitytools.d",
+            Path.home() / ".local" / "share" / "Steam" / "steamapps" / "compatibilitytools.d",
+            Path.home() / ".config" / "heroic" / "tools" / "proton",
+            Path.home() / ".config" / "heroic" / "tools" / "wine",
+            Path.home() / ".var" / "app" / "com.heroicgameslauncher.hgl" / "config" / "heroic" / "tools" / "proton",
+            Path.home() / ".var" / "app" / "com.heroicgameslauncher.hgl" / "config" / "heroic" / "tools" / "wine",
+            Path.home() / ".local" / "share" / "lutris" / "runners" / "wine",
+        ]
+    )
+    return _unique_existing_paths(roots)
 
 
 def find_majestic_exe(config: RunnerConfig, compatdata: Path | None) -> Path | None:

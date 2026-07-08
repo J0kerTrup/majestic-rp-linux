@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 
-from ..core.config_file import default_config_path
+from ..core.config_file import default_config_path, default_log_dir
 from ..core.errors import RunnerError
 from ..core.logger import setup_logging
 from .commands import cmd_analyze_crash, cmd_clean, cmd_config, cmd_detect, cmd_doctor, cmd_doctor_radio, cmd_env, cmd_install, cmd_patch, cmd_purge_majestic, cmd_run
@@ -62,6 +61,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return commands[args.command](args)
     except RunnerError as exc:
-        logger = setup_logging(args.debug, Path("logs"))
+        logger = setup_logging(args.debug, default_log_dir())
         logger.error("%s", exc)
         return 2

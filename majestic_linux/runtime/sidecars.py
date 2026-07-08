@@ -141,7 +141,7 @@ def _start_windows_sidecar(spec: SidecarSpec, executable: Path, context: Sidecar
     if spec.hidden:
         command = _hidden_windows_command(spec, prefix_executable, context)
     else:
-        command = [str(context.proton_path), "run", _windows_path(prefix_executable), *spec.args]
+        command = _windows_runner_command(context, _windows_path(prefix_executable), *spec.args)
     return subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -161,17 +161,23 @@ def _hidden_windows_command(spec: SidecarSpec, prefix_executable: Path, context:
         f"objShell.Run {_vbs_command_expr(_windows_path(prefix_executable), spec.args)}, 0, False\n",
         encoding="utf-8",
     )
-    return [str(context.proton_path), "run", "wscript.exe", _windows_path(vbs)]
+    return _windows_runner_command(context, "wscript.exe", _windows_path(vbs))
 
 
 def _taskkill_windows_image(image: str, context: SidecarContext) -> None:
     subprocess.run(
-        [str(context.proton_path), "run", "taskkill", "/F", "/IM", image],
+        _windows_runner_command(context, "taskkill", "/F", "/IM", image),
         env=sidecar_env(context),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
     )
+
+
+def _windows_runner_command(context: SidecarContext, executable: str, *args: str) -> list[str]:
+    if context.proton_path.name.lower() in {"wine", "wine64"}:
+        return [str(context.proton_path), executable, *args]
+    return [str(context.proton_path), "run", executable, *args]
 
 
 def _terminate_process(process: subprocess.Popen) -> None:

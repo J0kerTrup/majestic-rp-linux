@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.config import RunnerConfig, config_summary, load_config
+from ..core.config_file import default_log_dir
 from ..core.logger import setup_logging
 from ..detection.async_paths import detect_all_async
 from ..detection.paths import DetectionResult
@@ -18,9 +19,9 @@ class AppContext:
 
 
 def load_context(args: argparse.Namespace) -> tuple[AppContext, object]:
-    logger = setup_logging(args.debug, Path("logs"))
+    logger = setup_logging(args.debug, default_log_dir())
     config = load_config(args.config, dry_run=args.dry_run or None)
-    logger = setup_logging(args.debug, Path("logs"), config.log_level)
+    logger = setup_logging(args.debug, config.log_dir, config.log_level)
     logger.debug("Config: %s", config_summary(config))
     result = asyncio.run(detect_all_async(config, logger))
     return AppContext(config, result), logger

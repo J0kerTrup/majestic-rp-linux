@@ -68,7 +68,7 @@ def shutdown_prefix(config: RunnerConfig, prefix: Path, compatdata: Path | None,
 
 def run_with_lifecycle(command, config: RunnerConfig, compatdata: Path, *, dry_run: bool, logger: logging.Logger | None = None) -> int:
     prefix = compatdata / "pfx"
-    log_session = start_debug_log_session(logger=logger)
+    log_session = start_debug_log_session(root=config.log_dir, logger=logger)
     log_session.proton_log_roots = [path for path in (command.cwd, Path.cwd()) if path is not None]
     prepare_debug_environment(command.env, log_session)
     append_system_event(log_session, f"compatdata={compatdata}")

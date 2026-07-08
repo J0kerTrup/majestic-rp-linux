@@ -26,7 +26,7 @@ def build_radio_report(config: RunnerConfig, result: DetectionResult, *, dry_run
     if result.proton_path:
         config.runtime_library_paths = prepare_proton_runtime_fixups(result.proton_path, dry_run=False)
     env = _proton_env(config, result)
-    logs = analyze_logs(_log_candidates(result, prefix))
+    logs = analyze_logs(_log_candidates(config, result, prefix))
     checks = [system_info()]
     checks.append(audio_stack())
     checks.extend([wine_stack(prefix, result.compatdata_path), dll_override_status(prefix)])
@@ -159,8 +159,8 @@ def _proton_env(config: RunnerConfig, result: DetectionResult) -> dict[str, str]
     return command.env
 
 
-def _log_candidates(result: DetectionResult, prefix: Path | None) -> list[Path]:
-    roots = [Path("logs")]
+def _log_candidates(config: RunnerConfig, result: DetectionResult, prefix: Path | None) -> list[Path]:
+    roots = [config.log_dir]
     if prefix:
         roots.extend([
             prefix / "drive_c" / "users" / "steamuser" / "AppData" / "Local",

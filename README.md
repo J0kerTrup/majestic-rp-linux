@@ -89,7 +89,7 @@ The active config is `$XDG_CONFIG_HOME/majestic-runner/majestic-runner.conf`.
 If `XDG_CONFIG_HOME` is unset, the runner uses
 `~/.config/majestic-runner/majestic-runner.conf`. If the file is missing,
 `config` creates it from `examples/majestic-runner.example.conf`, falling back
-to the built-in template when the example file is not available. In an
+to the packaged example config when the checkout example is not available. In an
 interactive terminal, `config` opens the smart TUI configurator immediately.
 The menu can run smart autodetect for the current screen resolution,
 Steam/Proton paths, compatdata, Majestic Launcher, and GTA V installs from
@@ -106,7 +106,9 @@ majestic-linux config --print
 ```
 
 On first run after upgrading, an existing `majestic-runner.conf` in the current
-project directory is copied to the XDG config path.
+project directory is copied to the XDG config path. Existing configs are also
+updated in place with missing keys from the current example config; existing
+user values are not overwritten.
 
 An example lives at:
 
@@ -148,6 +150,7 @@ MAJESTIC_STORAGE_PATH=
 MAJESTIC_STORAGE_WINE_DRIVE=m
 MAJESTIC_PERMISSIONS=1
 MAJESTIC_LOG_LEVEL=INFO
+MAJESTIC_LOG_DIR=~/.cache/majestic-runner
 DRY_RUN=0
 ```
 
@@ -431,8 +434,11 @@ Majestic-injected files from the GTA root and move `_g9ec` DLC folders to
 Every `run` creates an isolated log directory:
 
 ```text
-logs/YYYY-MM-DD_HH-MM-SS/
+~/.cache/majestic-runner/YYYY-MM-DD_HH-MM-SS/
 ```
+
+The root directory is controlled by `MAJESTIC_LOG_DIR` or by the TUI
+`Set logs directory` menu item.
 
 The runner writes launch output and diagnostics into files such as:
 
@@ -459,7 +465,7 @@ After exit, the runner copies `steam-271590.log` when Proton creates it, writes
 post-run process/journal diagnostics, archives the session to:
 
 ```text
-logs/YYYY-MM-DD_HH-MM-SS.tar.gz
+~/.cache/majestic-runner/YYYY-MM-DD_HH-MM-SS.tar.gz
 ```
 
 Only the newest 30 log sessions are kept.

@@ -7,9 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from subprocess import Popen
 
+from ..core.config_file import default_log_dir
 
-def proton_log_path() -> Path:
-    return Path("logs") / "proton-run-latest.log"
+
+def proton_log_path(log_dir: Path | None = None) -> Path:
+    return (log_dir or default_log_dir()) / "proton-run-latest.log"
 
 
 def start_output_capture(process: Popen, log_path: Path | None = None) -> threading.Thread | None:

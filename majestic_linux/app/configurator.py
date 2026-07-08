@@ -19,6 +19,7 @@ from ..detection.paths import (
     find_proton,
     find_steam_root,
     gta_path_candidates,
+    proton_path_candidates,
 )
 from ..detection.platform import select_platform
 
@@ -131,9 +132,11 @@ def _curses_menu_loop(stdscr, state: ConfiguratorState, logger) -> None:
         elif choice == "platform":
             message = _select_platform_curses(stdscr, state)
         elif choice == "proton":
-            message = _set_path_value_curses(stdscr, state, "PROTON_PATH", "Path to proton executable")
+            message = _select_proton_path_curses(stdscr, state)
         elif choice == "compatdata":
             message = _set_path_value_curses(stdscr, state, "STEAM_COMPAT_DATA_PATH", "Path to compatdata directory")
+        elif choice == "logdir":
+            message = _set_path_value_curses(stdscr, state, "MAJESTIC_LOG_DIR", "Directory for runner logs")
         elif choice == "show":
             _text_view(stdscr, "Config file", state.config_path.read_text(encoding="utf-8").splitlines())
             message = ""
@@ -146,8 +149,9 @@ def _main_menu(stdscr, state: ConfiguratorState, message: str) -> str | None:
         ("resolution", "Set screen resolution", "Write GAME_WIDTH and GAME_HEIGHT"),
         ("window", "Toggle window mode", "Switch GAME_WINDOWED on/off"),
         ("platform", "Select platform", "auto, steam, egs, or rgl"),
-        ("proton", "Set Proton path", "Manual PROTON_PATH override"),
+        ("proton", "Select Proton/Wine path", "Choose Steam Proton, GE-Proton, Wine-GE, or manual path"),
         ("compatdata", "Set compatdata prefix", "Manual STEAM_COMPAT_DATA_PATH override"),
+        ("logdir", "Set logs directory", "Where runner logs and debug archives are saved"),
         ("show", "Show config file", "Open the raw config in a scrollable view"),
         ("exit", "Exit", "Return to shell"),
     ]
@@ -184,6 +188,7 @@ def _draw_main_screen(stdscr, state: ConfiguratorState, message: str, items: lis
         ("GTA V", str(state.result.gta_path or "-")),
         ("Majestic Launcher", str(state.result.majestic_exe or "-")),
         ("Platform", f"{state.result.selected_platform} (detected: {state.result.detected_platform})"),
+        ("Logs", str(load_config(state.config_path).log_dir)),
     ]
     y = top + 2
     for label, value in info:
@@ -234,6 +239,98 @@ def _select_gta_path_curses(stdscr, state: ConfiguratorState, logger) -> str:
         platform = select_platform("auto", detect_gta_platform(path), False, logger)
         update_config_values(state.config_path, {"GTA_PATH": str(path), "MAJESTIC_PLATFORM": platform})
         return f"GTA V path saved: {path}"
+
+
+def _select_proton_path_curses(stdscr, state: ConfiguratorState) -> str:
+    _status_screen(stdscr, "Scanning Proton and Wine runners...")
+    config = load_config(state.config_path)
+    candidates = proton_path_candidates(find_steam_root(config), include_wine=True)
+    selected = 0
+    while True:
+        selected = min(selected, max(0, len(candidates) + 1))
+        choice, selected = _select_runner_dialog(stdscr, "Select Proton/Wine path", candidates, selected)
+        if choice is None or choice == "back":
+            return "Selection cancelled."
+        if choice == "manual":
+            raw = _prompt(stdscr, "Manual Proton/Wine path", "Path to proton or wine executable", "")
+            if raw is None:
+                return "Selection cancelled."
+            path = Path(raw).expanduser()
+        else:
+            path = candidates[int(choice.split(":", 1)[1])]
+        if not path.exists():
+            return f"Path does not exist: {path}"
+        update_config_values(state.config_path, {"PROTON_PATH": str(path)})
+        return f"PROTON_PATH saved: {path}"
+
+
+def _select_runner_dialog(stdscr, title: str, candidates: list[Path], selected: int) -> tuple[str | None, int]:
+    actions = [("manual", "Manual path", "Type a custom runner executable"), ("back", "Back", "Return to main menu")]
+    while True:
+        rows: list[tuple[str, str, str, Path | None]] = []
+        for index, path in enumerate(candidates):
+            rows.append((f"path:{index}", _runner_label(path), _runner_description(path), path))
+        rows.extend((value, label, desc, None) for value, label, desc in actions)
+        selected = min(selected, max(0, len(rows) - 1))
+
+        stdscr.erase()
+        _paint_background(stdscr)
+        height, width = stdscr.getmaxyx()
+        detail_height = 5 if height >= 18 else 0
+        box_h = min(height - 2, max(12, min(len(rows) + detail_height + 7, height - 2)))
+        box_w = min(width - 4, 96)
+        top = max(0, (height - box_h) // 2)
+        left = max(0, (width - box_w) // 2)
+        _draw_box(stdscr, top, left, box_h, box_w, title)
+
+        list_top = top + 3
+        detail_top = top + box_h - detail_height - 1 if detail_height else top + box_h - 2
+        list_bottom = max(list_top, detail_top - 1)
+        visible = max(1, list_bottom - list_top)
+        action_header_index = len(candidates)
+        if candidates:
+            _addstr(stdscr, top + 2, left + 3, "Detected runners", curses.color_pair(3) | curses.A_BOLD)
+        else:
+            _addstr(stdscr, top + 2, left + 3, "No detected runners", curses.color_pair(4) | curses.A_BOLD)
+        start = max(0, selected - visible + 1)
+        row = list_top
+        for index in range(start, min(len(rows), start + visible)):
+            if index == action_header_index:
+                if row < list_bottom:
+                    _addstr(stdscr, row, left + 3, "Actions", curses.color_pair(3) | curses.A_BOLD)
+                    row += 1
+                if row >= list_bottom:
+                    break
+            _value, label, desc, _path = rows[index]
+            attr = curses.color_pair(5) | curses.A_BOLD if index == selected else curses.color_pair(2)
+            marker = ">" if index == selected else " "
+            line = _truncate(f"{marker} {label:<40} {desc}", box_w - 6)
+            _addstr(stdscr, row, left + 3, line.ljust(box_w - 6), attr)
+            row += 1
+
+        if detail_height:
+            _addstr(stdscr, detail_top, left + 3, "Selected", curses.color_pair(3) | curses.A_BOLD)
+            _addstr(stdscr, detail_top + 1, left + 3, "-" * (box_w - 6), curses.color_pair(6))
+            _value, label, desc, path = rows[selected]
+            selected_text = f"{path}  {desc}" if path else f"{label}  {desc}"
+            detail_lines = _wrap_text(selected_text, box_w - 6, detail_height - 3)
+            for index in range(detail_height - 3):
+                _addstr(stdscr, detail_top + 2 + index, left + 3, " " * (box_w - 6), curses.color_pair(2))
+            for index, line in enumerate(detail_lines):
+                _addstr(stdscr, detail_top + 2 + index, left + 3, line, curses.color_pair(2))
+
+        _addstr(stdscr, top + box_h - 2, left + 3, "Up/Down: move  Enter: select  Esc: back", curses.color_pair(6))
+        stdscr.refresh()
+
+        key = stdscr.getch()
+        if key in (curses.KEY_UP, ord("k")):
+            selected = (selected - 1) % len(rows)
+        elif key in (curses.KEY_DOWN, ord("j")):
+            selected = (selected + 1) % len(rows)
+        elif key in (curses.KEY_ENTER, 10, 13):
+            return rows[selected][0], selected
+        elif key in (27, ord("q")):
+            return None, selected
 
 
 def _select_gta_dialog(
@@ -515,6 +612,35 @@ def _compact_path_label(text: str) -> str:
     return f"{parent}/{name}" if parent and parent != "." else name
 
 
+def _runner_label(path: Path) -> str:
+    parent = path.parent.name
+    grandparent = path.parent.parent.name if path.parent.parent != path.parent else ""
+    if path.name.startswith("wine") and parent == "bin":
+        if str(path).startswith(("/usr/bin", "/bin")):
+            return path.name
+        return grandparent or path.name
+    return parent if path.name == "proton" else _compact_path_label(str(path))
+
+
+def _runner_description(path: Path) -> str:
+    text = str(path).lower()
+    if path.name.startswith("wine"):
+        if "wine-ge" in text or "wine_ge" in text:
+            return "wine-ge"
+        if "lutris" in text:
+            return "lutris wine"
+        if str(path).startswith(("/usr/bin", "/bin")):
+            return "system wine"
+        return "wine"
+    if "ge-proton" in text or "proton-ge" in text:
+        return "proton-ge"
+    if "compatibilitytools.d" in text:
+        return "custom proton"
+    if "steamapps/common" in text:
+        return "steam proton"
+    return "proton"
+
+
 def _wrap_text(text: str, width: int, max_lines: int) -> list[str]:
     if width <= 0 or max_lines <= 0:
         return []
@@ -562,6 +688,7 @@ def _plain_menu_loop(state: ConfiguratorState, logger) -> None:
         print(f"GTA V:             {state.result.gta_path or '-'}")
         print(f"Majestic Launcher: {state.result.majestic_exe or '-'}")
         print(f"Platform:          {state.result.selected_platform} (detected: {state.result.detected_platform})")
+        print(f"Logs:              {load_config(state.config_path).log_dir}")
         print()
         if message:
             print(message)
@@ -573,7 +700,8 @@ def _plain_menu_loop(state: ConfiguratorState, logger) -> None:
         print("5. Select platform")
         print("6. Set Proton path")
         print("7. Set compatdata prefix")
-        print("8. Show config file")
+        print("8. Set logs directory")
+        print("9. Show config file")
         print("0. Exit")
         choice = input("> ").strip().lower()
         if choice == "1":
@@ -597,6 +725,8 @@ def _plain_menu_loop(state: ConfiguratorState, logger) -> None:
         elif choice == "7":
             message = _set_path_value(state, "STEAM_COMPAT_DATA_PATH", "Path to compatdata directory")
         elif choice == "8":
+            message = _set_path_value(state, "MAJESTIC_LOG_DIR", "Directory for runner logs")
+        elif choice == "9":
             _show_config(state.config_path)
             message = ""
         elif choice in {"0", "q", "quit", "exit"}:
