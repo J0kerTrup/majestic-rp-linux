@@ -33,7 +33,12 @@ def apply_steam_compat(
     proton_path: Path,
     steam_root: Path | None,
     gta_path: Path,
+    platform: str,
 ) -> list[str]:
+    if platform != "steam":
+        env["MAJESTIC_STEAM_COMPAT_STATUS"] = "disabled-non-steam-platform"
+        env["MAJESTIC_STEAM_RUNTIME_STATUS"] = "disabled-non-steam-platform"
+        return command
     layout = detect_steam_compat_layout(proton_path, steam_root, gta_path)
     apply_steam_compat_environment(env, app_id, proton_path, gta_path, layout)
     return wrap_with_steam_runtime(command, env, config, layout)

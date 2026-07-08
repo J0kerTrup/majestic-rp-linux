@@ -42,7 +42,7 @@ def build_proton_command(
         {
             "STEAM_COMPAT_DATA_PATH": str(compatdata),
             "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(steam_root or ""),
-            "STEAM_COMPAT_APP_ID": app_id,
+            "STEAM_COMPAT_APP_ID": app_id if platform == "steam" else "0",
             "MAJESTIC_PLATFORM": platform,
             "MAJESTIC_PROTON_PLATFORM": config.native_platform or platform,
             "MAJESTIC_DISABLE_CEF_GPU": "1" if config.disable_cef_gpu else "0",
@@ -75,7 +75,7 @@ def build_proton_command(
         argv = [str(proton_path), str(majestic_exe), *shlex.split(config.launcher_flags)]
     else:
         argv = [str(proton_path), "waitforexitandrun", str(majestic_exe), *shlex.split(config.launcher_flags)]
-        argv = apply_steam_compat(argv, env, config, app_id=app_id, proton_path=proton_path, steam_root=steam_root, gta_path=wine_mapping.gta_path)
+        argv = apply_steam_compat(argv, env, config, app_id=app_id, proton_path=proton_path, steam_root=steam_root, gta_path=wine_mapping.gta_path, platform=platform)
     argv = apply_launch_options(argv, env, config.launch_options)
     return ProtonCommand(argv, env, majestic_exe.parent)
 
