@@ -105,10 +105,11 @@ To print the raw config without opening the TUI:
 majestic-linux config --print
 ```
 
-On first run after upgrading, an existing `majestic-runner.conf` in the current
-project directory is copied to the XDG config path. Existing configs are also
-updated in place with missing keys from the current example config; existing
-user values are not overwritten.
+On first run after upgrading, existing configs are updated in place with
+missing keys from the current example config; existing user values are not
+overwritten. A `majestic-runner.conf` in the current project directory is not
+copied to the XDG config path automatically. Use `--config ./majestic-runner.conf`
+when you intentionally want that file.
 
 An example lives at:
 

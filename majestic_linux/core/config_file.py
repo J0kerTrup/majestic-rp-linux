@@ -44,10 +44,6 @@ def resolve_config_path(path: Path | str | None = None) -> Path:
     return Path(path).expanduser()
 
 
-def legacy_config_path() -> Path:
-    return Path.cwd() / CONFIG_FILE_NAME
-
-
 def example_config_path() -> Path:
     return Path.cwd() / EXAMPLE_CONFIG_PATH
 
@@ -57,16 +53,6 @@ def ensure_config_file(path: Path, logger: logging.Logger | None = None) -> bool
     if path.exists():
         update_config_file(path, logger)
         return False
-    legacy = legacy_config_path()
-    is_default_path = path.resolve() == default_config_path().resolve()
-    is_distinct_legacy = legacy.exists() and legacy.resolve() != path.resolve()
-    if is_default_path and is_distinct_legacy:
-        if logger:
-            logger.info("Migrating legacy config: %s -> %s", legacy, path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(legacy, path)
-        update_config_file(path, logger)
-        return True
     example = example_config_path()
     if example.exists() and example.resolve() != path.resolve():
         if logger:
