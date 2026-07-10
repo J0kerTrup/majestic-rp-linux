@@ -45,6 +45,7 @@ def patch_index(file: Path, *, dry_run: bool, permissions: str) -> PatchStatus:
             'EO=async()=>{ht.info("[findGTA] Looking for Steam...");': 'EO=async()=>{const JO_ENV_GTA=process.env.MAJESTIC_GTA_WIN_PATH,JO_ENV_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM;if(JO_ENV_GTA&&["steam","rgl","egs"].includes(JO_ENV_PLATFORM)&&dn(JO_ENV_GTA))return ht.info("[findGTA] using forced Proton GTA path",JO_ENV_GTA,JO_ENV_PLATFORM),[JO_ENV_GTA,JO_ENV_PLATFORM];ht.info("[findGTA] Looking for Steam...");',
             'Nf=(e,t)=>{const n=e?.replace("GTA5.exe","");': 'Nf=(e,t)=>{const JO_FORCED_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM;if(["steam","rgl","egs"].includes(JO_FORCED_PLATFORM))return JO_FORCED_PLATFORM;const n=e?.replace("GTA5.exe","");',
             'tf=(e,t)=>{const n=e?.replace("GTA5.exe","");': 'tf=(e,t)=>{const JO_FORCED_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM;if(["steam","rgl","egs"].includes(JO_FORCED_PLATFORM))return JO_FORCED_PLATFORM;const n=e?.replace("GTA5.exe","");',
+            'gO=async()=>{mt.info("[findGTA] Looking for Steam...");': 'gO=async()=>{const JO_ENV_GTA=process.env.MAJESTIC_GTA_WIN_PATH,JO_ENV_PLATFORM=process.env.MAJESTIC_PROTON_PLATFORM;if(JO_ENV_GTA&&["steam","rgl","egs"].includes(JO_ENV_PLATFORM)&&dn(JO_ENV_GTA))return mt.info("[findGTA] using forced Proton GTA path",JO_ENV_GTA,JO_ENV_PLATFORM),[JO_ENV_GTA,JO_ENV_PLATFORM];mt.info("[findGTA] Looking for Steam...");',
         }
         for needle, replacement in needles.items():
             if needle in src:
@@ -68,8 +69,8 @@ def patch_index(file: Path, *, dry_run: bool, permissions: str) -> PatchStatus:
         if compat:
             src = f"/* {INDEX_COMPAT_MARKER}: force configured GTA platform and disable PlayGTAV fallback. */\n{src}"
 
-    direct_v4 = "async function JO_patchMultiplayerWithProgress(e,t){JO_adaptLaunchConfigForProton(e);return Ic.patchMultiplayerWithProgress(e,t)}"
-    direct_v1 = "function JO_patchMultiplayerWithProgress(e,t){return JO_adaptLaunchConfigForProton(e),Ic.patchMultiplayerWithProgress(e,t)}"
+    direct_v4 = "async function JO_patchMultiplayerWithProgress(e,t){JO_adaptLaunchConfigForProton(e);return Ic.patchMultiplayerWithProgress(e,n=>{ie(\"patcher_setPhase\",n)},t)}"
+    direct_v1 = "function JO_patchMultiplayerWithProgress(e,t){return JO_adaptLaunchConfigForProton(e),Ic.patchMultiplayerWithProgress(e,n=>{ie(\"patcher_setPhase\",n)},t)}"
     if DIRECT_MARKER not in src and DIRECT_MARKER_V1 in src and direct_v1 in src:
         src = src.replace(direct_v1, direct_v4, 1)
         src = f"/* {DIRECT_MARKER}: native patcher uses Proton-compatible platform; Steam fallback disabled. */\n{src}"
@@ -83,20 +84,15 @@ def patch_index(file: Path, *, dry_run: bool, permissions: str) -> PatchStatus:
             '["steam","rgl","egs"].includes(JO_PROTON_NATIVE_PLATFORM)&&r.gtaPlatform!==JO_PROTON_NATIVE_PLATFORM',
         )
         src = f"/* {DIRECT_MARKER}: Steam Proton keeps AppID 271590 but native patcher uses rgl unless overridden. */\n{src}"
-
     if DIRECT_MARKER not in src and MARKER not in src:
-        direct_needle = 'Ic.patchMultiplayerWithProgress(e,n=>{re("patcher_setPhase",n)})'
+        direct_needle = 'Ic.patchMultiplayerWithProgress(e,n=>{ie("patcher_setPhase",n)})'
         if direct_needle in src:
-            anchor = "let Lc=!1,uf=!1;"
+            anchor = "let kc=!1,uf=!1;"
             if anchor not in src:
                 raise PatchError(f"{file}: could not find patcher state anchor")
             src = src.replace(anchor, _index_direct_helper(permissions) + anchor, 1)
-            src = src.replace(direct_needle, 'JO_patchMultiplayerWithProgress(e,n=>{re("patcher_setPhase",n)})', 1)
+            src = src.replace(direct_needle, 'JO_patchMultiplayerWithProgress(e,n=>{ie("patcher_setPhase",n)})', 1)
             status.details.append("direct native patcher hook")
-        elif "app.asar.unpacked" in src and "gamePatcher.js" in src:
-            src = f"/* {MARKER}: existing worker path redirect was accepted. */\n{src}"
-        elif "gamePatcher.js" in src:
-            src = _patch_worker_reference(src, status)
 
     if src != original:
         validate_text(src, file)
