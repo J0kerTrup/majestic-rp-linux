@@ -116,7 +116,13 @@ If `XDG_CONFIG_HOME` is unset, the runner uses:
 ~/.config/majestic-runner/majestic-runner.conf
 ```
 
-Most users should leave path values empty and let auto-detection find Steam, Proton, GTA V, compatdata, and Majestic Launcher.
+Most users should run `majestic-linux config` once. In an interactive terminal it opens a smart TUI configurator immediately; use the menu to run smart autodetect, apply basic defaults, detect screen resolution and common Steam/Heroic/Legendary/Epic paths, and choose between multiple GTA V installs. A separate deep scan is available in the GTA path menu for home and mounted drives.
+
+To print the raw config instead:
+
+```bash
+majestic-linux config --print
+```
 
 To use a custom config path:
 

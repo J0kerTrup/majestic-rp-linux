@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 
-from ..core.config_file import default_config_path
+from ..core.config_file import default_config_path, default_log_dir
 from ..core.errors import RunnerError
 from ..core.logger import setup_logging
 from .commands import cmd_analyze_crash, cmd_clean, cmd_config, cmd_detect, cmd_doctor, cmd_doctor_radio, cmd_env, cmd_install, cmd_patch, cmd_purge_majestic, cmd_run
@@ -30,8 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
     purge_parser.add_argument("--include-trash", action="store_true", help="Also remove Majestic entries from the Linux trash")
     purge_parser.add_argument("--include-installers", action="store_true", help="Also remove Majestic installer files from home/download folders")
     purge_parser.add_argument("--include-projects", action="store_true", help="Also remove local majestic-rp-linux project copies/zips")
-    for command in ("doctor", "doctor-radio", "analyze-crash", "config", "detect", "env", "dry-run", "clean"):
+    for command in ("doctor", "doctor-radio", "analyze-crash", "detect", "env", "dry-run", "clean"):
         sub.add_parser(command)
+    config_parser = sub.add_parser("config")
+    config_parser.add_argument("--print", action="store_true", dest="print_config", help="Print config file instead of opening the TUI")
     return parser
 
 
@@ -60,6 +61,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return commands[args.command](args)
     except RunnerError as exc:
-        logger = setup_logging(args.debug, Path("logs"))
+        logger = setup_logging(args.debug, default_log_dir())
         logger.error("%s", exc)
         return 2

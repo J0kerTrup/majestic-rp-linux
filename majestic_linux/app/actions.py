@@ -7,6 +7,8 @@ from ..core.errors import RunnerError
 from ..detection.paths import DetectionResult, find_majestic_exes
 from ..discord.bridge import configure_discord_bridge_environment, stop_discord_bridge
 from ..patching.patcher import patch_js_tree
+from ..patching.targets import cleanup as cleanup_patch_targets
+from ..patching.targets import find_js_files, resolve_targets
 from ..runtime.cleanup import UninstallCleanupOptions, delete_cleanup_candidates, find_majestic_cleanup_candidates, find_majestic_uninstall_candidates
 from ..runtime.fonts import apply_emoji_font_fix, emoji_font_fix_is_applied
 from ..runtime.input import clear_caps_lock
@@ -32,6 +34,12 @@ def _patch_root(config, result: DetectionResult) -> Path:
 
 def _setup_marker(compatdata: Path) -> Path:
     return compatdata / "pfx" / SETUP_MARKER_NAME
+
+
+def _write_setup_marker(compatdata: Path) -> None:
+    marker = _setup_marker(compatdata)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("ok\n", encoding="utf-8")
 
 
 def _setup_is_complete(config, result: DetectionResult) -> bool:
@@ -89,10 +97,78 @@ def _prepare_prefix_and_launcher(context, logger, *, force: bool = False) -> Non
     apply_emoji_font_fix(config, result.compatdata_path, result.selected_platform, dry_run=config.dry_run, logger=logger)
     report = patch_js_tree(_patch_root(config, result), dry_run=config.dry_run, logger=logger, permissions=config.majestic_permissions)
     if not config.dry_run:
-        marker = _setup_marker(result.compatdata_path)
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text("ok\n", encoding="utf-8")
+        _write_setup_marker(result.compatdata_path)
     logger.success("Setup completed, patch changed=%s, files=%s", report.changed, len(report.statuses))  # type: ignore[attr-defined]
+
+
+def _autopatch_launcher_if_needed(context, logger) -> None:
+    config, result = context.config, context.result
+    if not config.auto_patch_launcher or result.compatdata_path is None or result.majestic_exe is None:
+        return
+    marker = _setup_marker(result.compatdata_path)
+    if not marker.exists():
+        return
+    root = _patch_root(config, result)
+    newer = _launcher_files_newer_than(root, marker, logger)
+    if not newer:
+        logger.debug("Launcher auto-patch: no newer launcher files detected")
+        return
+    logger.warning("Launcher files changed after setup; running automatic patch")
+    for path in newer[:8]:
+        logger.info("Auto-patch trigger: %s", path)
+    report = patch_js_tree(root, dry_run=config.dry_run, logger=logger, permissions=config.majestic_permissions)
+    if not config.dry_run:
+        _write_setup_marker(result.compatdata_path)
+    logger.success("Launcher auto-patch completed, changed=%s, files=%s", report.changed, len(report.statuses))  # type: ignore[attr-defined]
+
+
+def _launcher_files_newer_than(root: Path, marker: Path, logger) -> list[Path]:
+    try:
+        marker_mtime = marker.stat().st_mtime
+    except OSError:
+        return []
+    return [path for path in _launcher_patch_watch_files(root, logger) if _mtime(path) > marker_mtime + 1.0]
+
+
+def _launcher_patch_watch_files(root: Path, logger) -> list[Path]:
+    targets = None
+    try:
+        targets = resolve_targets(root)
+        files: list[Path] = []
+        if targets.asar_path and targets.asar_path.exists():
+            files.append(targets.asar_path)
+        if targets.mode == "source":
+            files.extend(
+                [
+                    targets.app_root / "src" / "electron" / "main" / "utils" / "findGTA.js",
+                    targets.app_root / "src" / "electron" / "main" / "utils" / "revalidateGTA.js",
+                    targets.app_root / "src" / "electron" / "main" / "patcher.js",
+                    targets.app_root / "src" / "electron" / "main" / "modules" / "game.js",
+                ]
+            )
+        elif targets.mode == "extracted":
+            files.extend(
+                [
+                    targets.app_root / "dist" / "electron" / "main" / "index.js",
+                    targets.app_root / "dist" / "electron" / "main" / "gamePatcher.js",
+                ]
+            )
+        elif targets.unpacked_root.exists():
+            files.extend(find_js_files(targets.unpacked_root / "dist" / "electron" / "main"))
+        return list(dict.fromkeys(path for path in files if path.exists()))
+    except Exception as exc:  # noqa: BLE001 - auto-patch must not block launch path discovery
+        logger.debug("Launcher auto-patch watch failed: %s", exc)
+        return []
+    finally:
+        if targets is not None:
+            cleanup_patch_targets(targets, logger)
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def _apply_cli_modes(config, args: argparse.Namespace) -> None:
@@ -221,6 +297,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     _require_launch_paths(result)
     if not _setup_is_complete(config, result):
         _prepare_prefix_and_launcher(context, logger)
+    else:
+        _autopatch_launcher_if_needed(context, logger)
     _ensure_majestic_launcher(config, result, logger)
     config.runtime_library_paths = prepare_proton_runtime_fixups(result.proton_path, dry_run=config.dry_run, logger=logger)
     mapping = _prepare_wine_drives(config, result, logger)

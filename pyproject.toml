@@ -23,3 +23,6 @@ majestic-linux = "majestic_linux.app.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["majestic_linux*"]
+
+[tool.setuptools.package-data]
+"majestic_linux.resources" = ["*.conf"]

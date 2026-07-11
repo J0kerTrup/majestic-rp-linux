@@ -42,7 +42,7 @@ def build_proton_command(
         {
             "STEAM_COMPAT_DATA_PATH": str(compatdata),
             "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(steam_root or ""),
-            "STEAM_COMPAT_APP_ID": app_id,
+            "STEAM_COMPAT_APP_ID": app_id if platform == "steam" else "0",
             "MAJESTIC_PLATFORM": platform,
             "MAJESTIC_PROTON_PLATFORM": config.native_platform or platform,
             "MAJESTIC_DISABLE_CEF_GPU": "1" if config.disable_cef_gpu else "0",
@@ -70,10 +70,18 @@ def build_proton_command(
     if config.radio_disable_winegstreamer:
         env["WINEDLLOVERRIDES"] = _with_dll_override(env.get("WINEDLLOVERRIDES", ""), "winegstreamer=d")
     apply_library_path(env, getattr(config, "runtime_library_paths", []))
-    argv = [str(proton_path), "waitforexitandrun", str(majestic_exe), *shlex.split(config.launcher_flags)]
-    argv = apply_steam_compat(argv, env, config, app_id=app_id, proton_path=proton_path, steam_root=steam_root, gta_path=wine_mapping.gta_path)
+    if _is_wine_runner(proton_path):
+        env["WINEPREFIX"] = str(compatdata / "pfx")
+        argv = [str(proton_path), str(majestic_exe), *shlex.split(config.launcher_flags)]
+    else:
+        argv = [str(proton_path), "waitforexitandrun", str(majestic_exe), *shlex.split(config.launcher_flags)]
+        argv = apply_steam_compat(argv, env, config, app_id=app_id, proton_path=proton_path, steam_root=steam_root, gta_path=wine_mapping.gta_path, platform=platform)
     argv = apply_launch_options(argv, env, config.launch_options)
     return ProtonCommand(argv, env, majestic_exe.parent)
+
+
+def _is_wine_runner(path: Path) -> bool:
+    return path.name.lower() in {"wine", "wine64"}
 
 
 def _steam_app_id(config: RunnerConfig) -> str:

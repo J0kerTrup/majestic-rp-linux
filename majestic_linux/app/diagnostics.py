@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from ..core.config import load_config
-from ..core.config_file import ensure_config_file, resolve_config_path
+from ..core.config_file import default_log_dir, ensure_config_file, resolve_config_path
 from ..core.logger import setup_logging
 from ..discord.bridge import configure_discord_bridge_environment
 from ..discord.bridge import discord_ipc_sockets, find_discord_bridge
@@ -22,15 +22,20 @@ from ..runtime.proton import build_proton_command
 from ..runtime.multiplayer_repair import MAJESTIC_GTA_ROOT_FILES, analyze_multiplayer_logs, latest_repair_time, multiplayer_roaming_paths
 from ..runtime.tricks import build_win10_plan
 from ..runtime.wine import prepare_wine_mapping
+from .configurator import run_configurator
 from .context import load_context, print_detection
 
 py_platform = importlib.import_module("platform")
 
 
 def cmd_config(args: argparse.Namespace) -> int:
-    logger = setup_logging(args.debug, Path("logs"))
+    logger = setup_logging(args.debug, default_log_dir())
     path = resolve_config_path(args.config)
     created = ensure_config_file(path, logger)
+    if not args.print_config and sys.stdin.isatty() and sys.stdout.isatty():
+        config = load_config(path)
+        logger = setup_logging(args.debug, config.log_dir, config.log_level)
+        return run_configurator(path, logger)
     print(f"Config:  {path}")
     print(f"Created: {'yes' if created else 'no'}")
     print(path.read_text(encoding="utf-8"))

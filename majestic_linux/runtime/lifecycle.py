@@ -68,7 +68,7 @@ def shutdown_prefix(config: RunnerConfig, prefix: Path, compatdata: Path | None,
 
 def run_with_lifecycle(command, config: RunnerConfig, compatdata: Path, *, dry_run: bool, logger: logging.Logger | None = None) -> int:
     prefix = compatdata / "pfx"
-    log_session = start_debug_log_session(logger=logger)
+    log_session = start_debug_log_session(root=config.log_dir, logger=logger)
     log_session.proton_log_roots = [path for path in (command.cwd, Path.cwd()) if path is not None]
     prepare_debug_environment(command.env, log_session)
     append_system_event(log_session, f"compatdata={compatdata}")
@@ -86,6 +86,7 @@ def run_with_lifecycle(command, config: RunnerConfig, compatdata: Path, *, dry_r
         if logger and archive:
             logger.info("Debug log archive: %s", archive)
         return 0
+    _ensure_launch_executable_exists(command.argv)
     process = subprocess.Popen(command.argv, env=command.env, cwd=command.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="ignore")
     _run_after_start(getattr(command, "after_start", ()), process, logger)
     output_thread = start_process_log_capture(process, log_session)
@@ -113,6 +114,22 @@ def run_with_lifecycle(command, config: RunnerConfig, compatdata: Path, *, dry_r
     if code != 0:
         raise CommandError(f"Proton exited with code {code}")
     return code
+
+
+def _ensure_launch_executable_exists(argv: list[str]) -> None:
+    if not argv:
+        raise CommandError("Launch command is empty")
+    executable = argv[0]
+    expanded = Path(executable).expanduser()
+    if expanded.is_absolute() or "/" in executable:
+        if expanded.exists():
+            return
+    elif shutil.which(executable):
+        return
+    raise CommandError(
+        f"Launch executable not found: {executable}. "
+        "Check MAJESTIC_LAUNCH_OPTIONS or PROTON_PATH."
+    )
 
 
 def _process_for_prefix(proc: Path, needles: Iterable[str]) -> PrefixProcess | None:

@@ -30,10 +30,13 @@ def setup_logging(debug: bool = False, log_dir: Path | None = None, level_name: 
     root.addHandler(stream)
 
     if log_dir is not None:
-        log_dir.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_dir / "majestic-python-runner.log", encoding="utf-8")
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(formatter)
-        root.addHandler(file_handler)
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(log_dir / "majestic-python-runner.log", encoding="utf-8")
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(formatter)
+            root.addHandler(file_handler)
+        except OSError as exc:
+            root.warning("Cannot write log file in %s: %s", log_dir, exc)
 
     return root

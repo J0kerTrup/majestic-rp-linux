@@ -89,11 +89,27 @@ The active config is `$XDG_CONFIG_HOME/majestic-runner/majestic-runner.conf`.
 If `XDG_CONFIG_HOME` is unset, the runner uses
 `~/.config/majestic-runner/majestic-runner.conf`. If the file is missing,
 `config` creates it from `examples/majestic-runner.example.conf`, falling back
-to the built-in template when the example file is not available. Environment
-variables override values from the file.
+to the packaged example config when the checkout example is not available. In an
+interactive terminal, `config` opens the smart TUI configurator immediately.
+The menu can run smart autodetect for the current screen resolution,
+Steam/Proton paths, compatdata, Majestic Launcher, and GTA V installs from
+Steam, Heroic, and Legendary/Epic manifests. If several GTA V installs are
+found, the menu lets you choose which path to persist. The GTA path menu also
+has a separate deep scan for home and mounted drives, so the default startup
+stays fast.
+Environment variables override values from the file.
 
-On first run after upgrading, an existing `majestic-runner.conf` in the current
-project directory is copied to the XDG config path.
+To print the raw config without opening the TUI:
+
+```bash
+majestic-linux config --print
+```
+
+On first run after upgrading, existing configs are updated in place with
+missing keys from the current example config; existing user values are not
+overwritten. A `majestic-runner.conf` in the current project directory is not
+copied to the XDG config path automatically. Use `--config ./majestic-runner.conf`
+when you intentionally want that file.
 
 An example lives at:
 
@@ -106,6 +122,7 @@ Most users should leave paths empty and let auto-detection do the work:
 ```ini
 MAJESTIC_PLATFORM=auto
 MAJESTIC_AUTO_DETECT=1
+MAJESTIC_AUTO_PATCH_LAUNCHER=1
 MAJESTIC_PROTON_NATIVE_PLATFORM=
 APP_ID=271590
 STEAM_ROOT=
@@ -135,6 +152,7 @@ MAJESTIC_STORAGE_PATH=
 MAJESTIC_STORAGE_WINE_DRIVE=m
 MAJESTIC_PERMISSIONS=1
 MAJESTIC_LOG_LEVEL=INFO
+MAJESTIC_LOG_DIR=~/.cache/majestic-runner
 DRY_RUN=0
 ```
 
@@ -181,6 +199,10 @@ wheel_error_threshold=25
 There is no persistent `[radio]` config anymore. Radio tooling is diagnostic and
 is enabled only by `doctor-radio`, `run --radio-safe`, or
 `run --disable-winegstreamer`.
+
+When `MAJESTIC_AUTO_PATCH_LAUNCHER=1`, `run` checks whether Majestic Launcher
+files changed after setup and automatically reapplies the JS patch when the
+launcher updates.
 
 ## Launch Flow
 
@@ -418,8 +440,11 @@ Majestic-injected files from the GTA root and move `_g9ec` DLC folders to
 Every `run` creates an isolated log directory:
 
 ```text
-logs/YYYY-MM-DD_HH-MM-SS/
+~/.cache/majestic-runner/YYYY-MM-DD_HH-MM-SS/
 ```
+
+The root directory is controlled by `MAJESTIC_LOG_DIR` or by the TUI
+`Set logs directory` menu item.
 
 The runner writes launch output and diagnostics into files such as:
 
@@ -446,7 +471,7 @@ After exit, the runner copies `steam-271590.log` when Proton creates it, writes
 post-run process/journal diagnostics, archives the session to:
 
 ```text
-logs/YYYY-MM-DD_HH-MM-SS.tar.gz
+~/.cache/majestic-runner/YYYY-MM-DD_HH-MM-SS.tar.gz
 ```
 
 Only the newest 30 log sessions are kept.

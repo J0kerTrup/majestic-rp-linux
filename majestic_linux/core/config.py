@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config_file import ensure_config_file, resolve_config_path
+from .config_file import default_log_dir, ensure_config_file, resolve_config_path
 from .config_parser import merged_values, parse_bool, parse_float, parse_int, parse_path
 
 DEFAULT_DISCORD_BRIDGE_URL = "https://github.com/0e4ef622/wine-discord-ipc-bridge/releases/download/v0.0.3/winediscordipcbridge.exe"
@@ -53,7 +53,9 @@ class RunnerConfig:
     app_id: str = "271590"
     dry_run: bool = False
     auto_detect: bool = True
+    auto_patch_launcher: bool = True
     log_level: str = "INFO"
+    log_dir: Path = field(default_factory=default_log_dir)
     graceful_shutdown: bool = True
     kill_wine_on_exit: bool = True
     kill_timeout_seconds: int = 10
@@ -115,7 +117,9 @@ def load_config(config_path: Path | str | None = None, *, dry_run: bool | None =
         app_id=values.get("APP_ID") or "271590",
         dry_run=parse_bool(values.get("DRY_RUN"), False),
         auto_detect=parse_bool(values.get("MAJESTIC_AUTO_DETECT"), True),
+        auto_patch_launcher=parse_bool(values.get("MAJESTIC_AUTO_PATCH_LAUNCHER"), True),
         log_level=values.get("MAJESTIC_LOG_LEVEL", "INFO").strip().upper() or "INFO",
+        log_dir=parse_path(values.get("MAJESTIC_LOG_DIR")) or default_log_dir(),
         graceful_shutdown=parse_bool(values.get("SHUTDOWN_GRACEFUL_SHUTDOWN"), True),
         kill_wine_on_exit=parse_bool(values.get("SHUTDOWN_KILL_WINE_ON_EXIT"), True),
         kill_timeout_seconds=parse_int(values.get("SHUTDOWN_KILL_TIMEOUT_SECONDS"), 10),
@@ -137,7 +141,9 @@ def config_summary(config: RunnerConfig) -> dict[str, object]:
         "platform_explicit": config.platform_explicit,
         "dry_run": config.dry_run,
         "auto_detect": config.auto_detect,
+        "auto_patch_launcher": config.auto_patch_launcher,
         "log_level": config.log_level,
+        "log_dir": str(config.log_dir),
         "kill_wine_on_exit": config.kill_wine_on_exit,
         "steam_overlay": config.steam_overlay,
         "steam_runtime": config.steam_runtime,

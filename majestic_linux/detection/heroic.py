@@ -32,4 +32,29 @@ def heroic_gta_candidates(home: Path | None = None) -> list[Path]:
         for value in data.values() if isinstance(data, dict) else []:
             if isinstance(value, str) and "Grand Theft Auto" in value:
                 candidates.append(Path(value).expanduser())
-    return candidates
+    return list(dict.fromkeys(candidates))
+
+
+def legendary_gta_candidates(home: Path | None = None) -> list[Path]:
+    home = home or Path.home()
+    candidates: list[Path] = []
+    manifests = [
+        home / ".config" / "legendary" / "installed.json",
+        home / ".var" / "app" / "com.heroicgameslauncher.hgl" / "config" / "legendary" / "installed.json",
+        home / ".var" / "app" / "com.heroicgameslauncher.hgl" / "config" / "heroic" / "legendaryConfig" / "legendary" / "installed.json",
+    ]
+    for manifest in manifests:
+        if not manifest.exists():
+            continue
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for app_name, value in data.items() if isinstance(data, dict) else []:
+            if not isinstance(value, dict):
+                continue
+            title = " ".join(str(value.get(key, "")) for key in ("title", "app_name", "app_title"))
+            install_path = value.get("install_path") or value.get("installPath")
+            if install_path and ("grand theft auto" in title.lower() or str(app_name).lower() in {"9d2d0eb64d5c44529cece33fe2a46482", "gta5"}):
+                candidates.append(Path(str(install_path)).expanduser())
+    return list(dict.fromkeys(candidates))
