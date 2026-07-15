@@ -252,7 +252,10 @@ def _prepare_mingw_source(package_root: Path) -> None:
             ('std::exception(("Failed to open file" + fileName).c_str())', 'std::runtime_error("Failed to open file" + fileName)'),
         ),
     }
-    for file in (package_root / "src").rglob("*.cpp"):
+    source_suffixes = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}
+    for file in (package_root / "src").rglob("*"):
+        if not file.is_file() or file.suffix.lower() not in source_suffixes:
+            continue
         text = read_text(file)
         text = text.replace('std::exception("', 'std::runtime_error("')
         for old, new in replacements.get(file, ()):
