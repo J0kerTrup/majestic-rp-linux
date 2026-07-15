@@ -3,6 +3,7 @@ from __future__ import annotations
 from .api import patch_js_tree, patch_source_tree, patch_state, patch_text, worker_adapter
 from .common import PatchReport, PatchStatus, PatchTargets
 from .index import patch_index
+from .native import patch_native_source_tree
 from .source_find import patch_source_find_gta, patch_source_revalidate_gta
 from .source_runtime import patch_source_game, patch_source_patcher
 from .targets import find_js_files, resolve_targets
@@ -14,6 +15,7 @@ __all__ = [
     "PatchTargets",
     "find_js_files",
     "patch_index",
+    "patch_native_source_tree",
     "patch_js_tree",
     "patch_source_find_gta",
     "patch_source_game",

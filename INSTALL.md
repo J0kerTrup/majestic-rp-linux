@@ -18,6 +18,7 @@ The old repository wrapper still works when running from a source checkout:
 - Steam GTA V with an existing Proton prefix, or manually configured Proton and GTA paths.
 - `protontricks` or `winetricks` for first-run prefix setup.
 - `asar` for Majestic Launcher `app.asar` patching.
+- `mingw-w64-gcc` and `cmake` for rebuilding the Launcher 6.x native patcher.
 - Optional: `xdotool` for Caps Lock cleanup before launch.
 
 Keep the project path ASCII-only. Proton, Wine, and some shell tools can fail on non-English paths.

@@ -16,7 +16,8 @@ from .common import (
     read_text,
     validate_text,
 )
-from .index import patch_index
+from .index import patch_index, patch_modern_index
+from .native import build_native_module, patch_native_source_tree
 from .source_find import patch_source_find_gta, patch_source_revalidate_gta
 from .source_runtime import patch_source_game, patch_source_patcher
 from .targets import cleanup, extract_asar, find_js_files, repack_asar, resolve_targets
@@ -55,12 +56,30 @@ def patch_js_tree(
     try:
         if targets.mode == "source":
             statuses.extend(patch_source_tree(targets.app_root, dry_run=dry_run, permissions=permissions))
+        elif targets.mode == "modern":
+            index = targets.app_root / "out" / "main" / "index.js"
+            worker = targets.app_root / "out" / "main" / "patcherWorker.js"
+            statuses.append(patch_modern_index(index, dry_run=dry_run))
+            statuses.append(patch_worker(worker, dry_run=dry_run, permissions=permissions))
         else:
             extract_asar(targets, dry_run=dry_run, logger=logger)
-            index = targets.app_root / "dist" / "electron" / "main" / "index.js"
-            worker = targets.unpacked_root / "dist" / "electron" / "main" / "gamePatcher.js"
-            statuses.append(patch_index(index, dry_run=dry_run, permissions=permissions))
-            statuses.append(patch_worker(worker, dry_run=dry_run, permissions=permissions))
+            # Patch the extracted package: asar pack recreates app.asar.unpacked
+            # from this tree and would overwrite edits made only in the sibling.
+            native_package = targets.app_root / "node_modules" / "majestic-patcher"
+            statuses.extend(patch_native_source_tree(native_package, dry_run=dry_run))
+            if (native_package / "src").is_dir():
+                launcher_exe = targets.resources_dir.parent / "Majestic Launcher.exe"
+                statuses.append(build_native_module(native_package, launcher_exe, dry_run=dry_run))
+            modern_worker = targets.app_root / "out" / "main" / "patcherWorker.js"
+            if modern_worker.is_file():
+                modern_index = targets.app_root / "out" / "main" / "index.js"
+                statuses.append(patch_modern_index(modern_index, dry_run=dry_run))
+                statuses.append(patch_worker(modern_worker, dry_run=dry_run, permissions=permissions))
+            else:
+                index = targets.app_root / "dist" / "electron" / "main" / "index.js"
+                worker = targets.unpacked_root / "dist" / "electron" / "main" / "gamePatcher.js"
+                statuses.append(patch_index(index, dry_run=dry_run, permissions=permissions))
+                statuses.append(patch_worker(worker, dry_run=dry_run, permissions=permissions))
             repack_asar(targets, dry_run=dry_run, logger=logger)
     finally:
         cleanup(targets, logger)

@@ -16,6 +16,8 @@ def resolve_targets(input_path: Path) -> PatchTargets:
     app_asar_from_resources = root / "resources" / "app.asar"
     sibling_app_asar = root.parent / "app.asar"
     extracted_index = root / "dist" / "electron" / "main" / "index.js"
+    modern_index = root / "out" / "main" / "index.js"
+    modern_worker = root / "out" / "main" / "patcherWorker.js"
     source_files = [
         root / "src" / "electron" / "main" / "utils" / "findGTA.js",
         root / "src" / "electron" / "main" / "utils" / "revalidateGTA.js",
@@ -39,9 +41,11 @@ def resolve_targets(input_path: Path) -> PatchTargets:
         return PatchTargets("asar", temp, root.parent, sibling_app_asar, root, temp)
     if extracted_index.is_file():
         return PatchTargets("extracted", root, root.parent, None, root)
+    if modern_index.is_file() and modern_worker.is_file():
+        return PatchTargets("modern", root, root.parent, None, root)
     raise PatchError(
         "Could not locate Majestic app files. Pass resources/, resources/app.asar, "
-        "resources/app.asar.unpacked, extracted app root, or recovered source root."
+        "resources/app.asar.unpacked, an extracted dist/ or out/ app root, or recovered source root."
     )
 
 
@@ -61,7 +65,23 @@ def extract_asar(targets: PatchTargets, *, dry_run: bool, logger: logging.Logger
     if targets.mode != "asar" or targets.asar_path is None:
         return
     asar = os.environ.get("ASAR_BIN", "asar")
-    run_command([asar, "extract", str(targets.asar_path), str(targets.app_root)], dry_run=False, logger=logger)
+    # Launcher 6.x marks win-ca/roots.exe as unpacked, but some installer
+    # builds omit that optional helper from app.asar.unpacked. The asar CLI
+    # refuses to extract the whole archive when any unpacked source is absent.
+    # Supply a temporary placeholder only for extraction, then remove both
+    # copies so it is not introduced into the repacked application.
+    roots_source = targets.unpacked_root / "node_modules" / "win-ca" / "lib" / "roots.exe"
+    roots_extracted = targets.app_root / "node_modules" / "win-ca" / "lib" / "roots.exe"
+    placeholder_created = not roots_source.exists()
+    if placeholder_created:
+        roots_source.parent.mkdir(parents=True, exist_ok=True)
+        roots_source.touch()
+    try:
+        run_command([asar, "extract", str(targets.asar_path), str(targets.app_root)], dry_run=False, logger=logger)
+    finally:
+        if placeholder_created:
+            roots_source.unlink(missing_ok=True)
+            roots_extracted.unlink(missing_ok=True)
 
 
 def repack_asar(targets: PatchTargets, *, dry_run: bool, logger: logging.Logger | None) -> None:
@@ -72,7 +92,19 @@ def repack_asar(targets: PatchTargets, *, dry_run: bool, logger: logging.Logger 
         if not backup.exists():
             shutil.copy2(targets.asar_path, backup)
     asar = os.environ.get("ASAR_BIN", "asar")
-    run_command([asar, "pack", str(targets.app_root), str(targets.asar_path)], dry_run=dry_run, logger=logger)
+    command = [asar, "pack", str(targets.app_root), str(targets.asar_path)]
+    # process.dlopen cannot load a PE native addon from inside app.asar.
+    # Preserve the launcher's native-package layout when rebuilding it.
+    if (targets.app_root / "out" / "main" / "patcherWorker.js").is_file():
+        command.extend(
+            [
+                "--unpack-dir",
+                "node_modules/majestic-patcher",
+                "--unpack",
+                "**/*.{node,exe}",
+            ]
+        )
+    run_command(command, dry_run=dry_run, logger=logger)
 
 
 def cleanup(targets: PatchTargets, logger: logging.Logger | None = None) -> None:
