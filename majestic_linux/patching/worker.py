@@ -90,7 +90,10 @@ const requireFromHere = createRequire(import.meta.url);
 const parentPort = process.parentPort;
 const protonGtaPath = process.env.MAJESTIC_GTA_WIN_PATH || 'G:\\\\';
 const requestedPlatform = process.env.MAJESTIC_PROTON_PLATFORM || 'rgl';
-const nativePlatform = process.env.MAJESTIC_PROTON_NATIVE_PLATFORM || (requestedPlatform === 'steam' ? 'rgl' : requestedPlatform);
+// Launcher 6.x has a native SteamPlatform implementation.  Do not apply the
+// old steam -> rgl compatibility lie here: it starts GTA, but makes the C++
+// patcher run the wrong platform pipeline and leaves GTA5.exe unpatched.
+const nativePlatform = process.env.MAJESTIC_PROTON_NATIVE_PLATFORM || requestedPlatform;
 const permissions = {values};
 
 function patchJsonFile(filePath, patcherFn) {{

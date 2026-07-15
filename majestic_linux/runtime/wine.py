@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -103,3 +105,54 @@ def ensure_egs_launcher_symlink(gta_path: Path, *, dry_run: bool = False, logger
         logger.info("Creating EGS compatibility symlink %s -> %s", link, target.name)
     if not dry_run:
         link.symlink_to(target.name)
+
+
+def ensure_steam_protocol(
+    proton_path: Path,
+    compatdata: Path,
+    steam_root: Path | None,
+    wine_gta_path: str,
+    *,
+    app_id: str = "271590",
+    dry_run: bool = False,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Register the steam:// handler expected by Launcher 6.x's C++ patcher.
+
+    Proton does not reliably expose the host Steam protocol inside the Wine
+    prefix.  Point it at GTAVLauncher.exe in the mapped GTA drive: the native
+    SteamPlatform can then start the normal Rockstar chain, whose Launcher.exe
+    is intercepted by RockstarPatch and redirected to Multiplayer/backup/GTA5.exe.
+    """
+    gta_root = wine_gta_path.rstrip("\\/")
+    launcher = f'{gta_root}\\GTAVLauncher.exe'
+    command = f'"{launcher}" -nobattleye'
+    env = os.environ.copy()
+    env.update(
+        {
+            "STEAM_COMPAT_DATA_PATH": str(compatdata),
+            "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(steam_root or ""),
+            "STEAM_COMPAT_APP_ID": app_id,
+            "SteamAppId": app_id,
+            "SteamGameId": app_id,
+        }
+    )
+    entries = (
+        (r"HKCU\Software\Classes\steam", "", "URL:Steam Protocol"),
+        (r"HKCU\Software\Classes\steam", "URL Protocol", ""),
+        (r"HKCU\Software\Classes\steam\DefaultIcon", "", launcher),
+        (r"HKCU\Software\Classes\steam\shell\open\command", "", command),
+    )
+    for key, name, value in entries:
+        argv = [str(proton_path), "run", "reg.exe", "add", key, "/f", "/ve" if not name else "/v"]
+        if name:
+            argv.append(name)
+        argv.extend(["/t", "REG_SZ", "/d", value])
+        if logger:
+            logger.info("Registering Proton Steam protocol: %s", key)
+        if dry_run:
+            continue
+        result = subprocess.run(argv, env=env, check=False, capture_output=True, text=True)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise RunnerError(f"Failed to register Steam protocol ({key}): {detail or result.returncode}")
