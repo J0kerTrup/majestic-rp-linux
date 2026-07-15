@@ -15,11 +15,11 @@ from ..runtime.launcher import install_majestic_launcher
 from ..runtime.multiplayer_repair import latest_repair_time, repair_gta_conflicts, repair_multiplayer_cache
 from ..runtime.proton import build_proton_command, run_proton_managed
 from ..runtime.tricks import apply_powershell, apply_win10_mode, powershell_setup_is_complete
-from ..runtime.wine import ensure_egs_launcher_symlink, ensure_steam_protocol, prepare_optional_storage_drive, prepare_wine_mapping
+from ..runtime.wine import ensure_egs_launcher_symlink, prepare_optional_storage_drive, prepare_wine_mapping
 from ..radio.doctor import build_radio_report, radio_safe_env
 from .context import load_context
 
-SETUP_MARKER_NAME = ".majestic-runner-setup-v3.done"
+SETUP_MARKER_NAME = ".majestic-runner-setup-v4.done"
 
 
 def _patch_root(config, result: DetectionResult) -> Path:
@@ -82,21 +82,11 @@ def _prepare_wine_drives(config, result: DetectionResult, logger):
 def _prepare_prefix_and_launcher(context, logger, *, force: bool = False) -> None:
     config, result = context.config, context.result
     _require_launch_paths(result)
-    mapping = _prepare_wine_drives(config, result, logger)
+    _prepare_wine_drives(config, result, logger)
     if not force and _setup_is_complete(config, result):
         logger.info("One-time setup already completed; skipping patch/setup steps")
         return
     _ensure_majestic_launcher(config, result, logger)
-    if result.selected_platform == "steam":
-        ensure_steam_protocol(
-            result.proton_path,
-            result.compatdata_path,
-            result.steam_root,
-            mapping.wine_gta_path,
-            app_id=config.app_id,
-            dry_run=config.dry_run,
-            logger=logger,
-        )
     config.runtime_library_paths = prepare_proton_runtime_fixups(result.proton_path, dry_run=config.dry_run, logger=logger)
     if result.selected_platform == "egs":
         ensure_egs_launcher_symlink(result.gta_path, dry_run=config.dry_run, logger=logger)
@@ -240,16 +230,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     _ensure_majestic_launcher(config, result, logger)
     config.runtime_library_paths = prepare_proton_runtime_fixups(result.proton_path, dry_run=config.dry_run, logger=logger)
     mapping = _prepare_wine_drives(config, result, logger)
-    if result.selected_platform == "steam":
-        ensure_steam_protocol(
-            result.proton_path,
-            result.compatdata_path,
-            result.steam_root,
-            mapping.wine_gta_path,
-            app_id=config.app_id,
-            dry_run=config.dry_run,
-            logger=logger,
-        )
     clear_caps_lock(dry_run=config.dry_run, logger=logger)
     command = build_proton_command(config, result.proton_path, result.compatdata_path, result.steam_root, result.majestic_exe, result.selected_platform, mapping)
     discord = configure_discord_bridge_environment(

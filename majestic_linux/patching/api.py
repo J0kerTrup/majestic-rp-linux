@@ -16,7 +16,7 @@ from .common import (
     read_text,
     validate_text,
 )
-from .index import patch_index
+from .index import patch_index, patch_modern_index
 from .source_find import patch_source_find_gta, patch_source_revalidate_gta
 from .source_runtime import patch_source_game, patch_source_patcher
 from .targets import cleanup, extract_asar, find_js_files, repack_asar, resolve_targets
@@ -56,12 +56,16 @@ def patch_js_tree(
         if targets.mode == "source":
             statuses.extend(patch_source_tree(targets.app_root, dry_run=dry_run, permissions=permissions))
         elif targets.mode == "modern":
+            index = targets.app_root / "out" / "main" / "index.js"
             worker = targets.app_root / "out" / "main" / "patcherWorker.js"
+            statuses.append(patch_modern_index(index, dry_run=dry_run))
             statuses.append(patch_worker(worker, dry_run=dry_run, permissions=permissions))
         else:
             extract_asar(targets, dry_run=dry_run, logger=logger)
             modern_worker = targets.app_root / "out" / "main" / "patcherWorker.js"
             if modern_worker.is_file():
+                modern_index = targets.app_root / "out" / "main" / "index.js"
+                statuses.append(patch_modern_index(modern_index, dry_run=dry_run))
                 statuses.append(patch_worker(modern_worker, dry_run=dry_run, permissions=permissions))
             else:
                 index = targets.app_root / "dist" / "electron" / "main" / "index.js"
