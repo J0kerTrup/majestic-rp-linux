@@ -17,7 +17,7 @@ from .common import (
     validate_text,
 )
 from .index import patch_index, patch_modern_index
-from .native import patch_native_source_tree
+from .native import build_native_module, patch_native_source_tree
 from .source_find import patch_source_find_gta, patch_source_revalidate_gta
 from .source_runtime import patch_source_game, patch_source_patcher
 from .targets import cleanup, extract_asar, find_js_files, repack_asar, resolve_targets
@@ -67,6 +67,9 @@ def patch_js_tree(
             # from this tree and would overwrite edits made only in the sibling.
             native_package = targets.app_root / "node_modules" / "majestic-patcher"
             statuses.extend(patch_native_source_tree(native_package, dry_run=dry_run))
+            if (native_package / "src").is_dir():
+                launcher_exe = targets.resources_dir.parent / "Majestic Launcher.exe"
+                statuses.append(build_native_module(native_package, launcher_exe, dry_run=dry_run))
             modern_worker = targets.app_root / "out" / "main" / "patcherWorker.js"
             if modern_worker.is_file():
                 modern_index = targets.app_root / "out" / "main" / "index.js"

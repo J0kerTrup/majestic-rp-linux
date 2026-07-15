@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
+import tempfile
+import os
 from pathlib import Path
 
 from ..core.errors import PatchError
@@ -161,3 +165,103 @@ def patch_native_source_tree(package_root: Path, *, dry_run: bool = False) -> li
         _patch_game_cpp(required[2], dry_run=dry_run),
         _patch_rockstar_cpp(required[3], dry_run=dry_run),
     ]
+
+
+def build_native_module(package_root: Path, launcher_exe: Path, *, dry_run: bool = False) -> PatchStatus:
+    """Cross-build the patched addon; editing its bundled sources alone is a no-op."""
+    output = package_root / "build" / "Release" / "majestic-patcher.node"
+    status = PatchStatus(output)
+    if dry_run:
+        status.details.append("would rebuild native Proton addon")
+        return status
+
+    tools = {
+        name: shutil.which(name)
+        for name in ("cmake", "x86_64-w64-mingw32-g++", "x86_64-w64-mingw32-objdump", "x86_64-w64-mingw32-dlltool", "x86_64-w64-mingw32-strip")
+    }
+    missing = [name for name, path in tools.items() if path is None]
+    if missing:
+        raise PatchError("Cannot rebuild Launcher 6.x native addon; missing: " + ", ".join(missing))
+    if not launcher_exe.is_file():
+        raise PatchError(f"Electron executable not found for native addon linking: {launcher_exe}")
+
+    node_api = package_root.parent / "node-addon-api"
+    if not node_api.is_dir():
+        raise PatchError(f"node-addon-api headers not found: {node_api}")
+
+    # The published source is built by MSVC and contains casing/stdlib assumptions.
+    _prepare_mingw_source(package_root)
+    with tempfile.TemporaryDirectory(prefix="majestic-native-cmake-") as temp_raw:
+        temp = Path(temp_raw)
+        include = temp / "include"
+        include.mkdir()
+        mingw_include = Path("/usr/x86_64-w64-mingw32/include")
+        for requested, actual in (("Windows.h", "windows.h"), ("Shlobj.h", "shlobj.h"), ("Shlwapi.h", "shlwapi.h"), ("Psapi.h", "psapi.h"), ("RestartManager.h", "restartmanager.h")):
+            (include / requested).symlink_to(mingw_include / actual)
+
+        exports = subprocess.run(
+            [tools["x86_64-w64-mingw32-objdump"], "-p", str(launcher_exe)],
+            check=True, capture_output=True, text=True,
+        ).stdout
+        names = sorted({line.split()[-1] for line in exports.splitlines() if line.split() and line.split()[-1].startswith("napi_")})
+        if not names:
+            raise PatchError(f"No N-API exports found in {launcher_exe}")
+        definition = temp / "node.def"
+        definition.write_text("EXPORTS\n" + "\n".join(names) + "\n", encoding="utf-8")
+        node_lib = temp / "libnode.a"
+        subprocess.run([tools["x86_64-w64-mingw32-dlltool"], "-d", str(definition), "-l", str(node_lib), "-D", launcher_exe.name], check=True)
+
+        build = temp / "build"
+        flags = "-include algorithm -include cmath -include thread -include stdexcept -fpermissive -static-libgcc -static-libstdc++"
+        subprocess.run([
+            tools["cmake"], "-S", str(package_root), "-B", str(build),
+            f"-DCMAKE_TOOLCHAIN_FILE={package_root / 'WineToolchain.cmake'}",
+            # RelWithDebInfo avoids the upstream's unconditional MSVC-only /Zi
+            # options while still compiling the non-DEBUG production path.
+            "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O0 -DNDEBUG",
+            f"-DCMAKE_CXX_FLAGS={flags}",
+            f"-DCMAKE_JS_INC=/usr/include/node;{node_api};{include}",
+            f"-DCMAKE_JS_LIB={node_lib}", f"-DNAPI_INCLUDE_HEADERS={node_api}",
+        ], check=True)
+        jobs = str(min(os.cpu_count() or 4, 16))
+        subprocess.run([tools["cmake"], "--build", str(build), "--config", "RelWithDebInfo", f"-j{jobs}"], check=True)
+        built = build / "majestic-patcher.node"
+        if not built.is_file():
+            raise PatchError(f"Native addon build produced no output: {built}")
+        subprocess.run([tools["x86_64-w64-mingw32-strip"], "--strip-unneeded", str(built)], check=True)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(built, output)
+
+    # libstdc++/libgcc are static, but GCC's std::thread still uses winpthreads.
+    pthread = Path("/usr/x86_64-w64-mingw32/bin/libwinpthread-1.dll")
+    if pthread.is_file():
+        shutil.copy2(pthread, output.parent / pthread.name)
+    status.changed = True
+    status.details.append("rebuilt native Proton addon")
+    return status
+
+
+def _prepare_mingw_source(package_root: Path) -> None:
+    replacements = {
+        package_root / "src" / "core" / "Launcher.cpp": (
+            ("HANDLE_ERRORS(err::handler::run)", "HANDLE_ERRORS()"),
+            ("HANDLE_ERRORS(err::handler::main)", "HANDLE_ERRORS()"),
+            ('std::locale::global(std::locale("en_US.utf-8"));', 'std::locale::global(std::locale::classic());'),
+        ),
+        package_root / "src" / "config" / "ConfigBase.cpp": (
+            ('std::exception(("Failed to open file" + fileName).c_str())', 'std::runtime_error("Failed to open file" + fileName)'),
+        ),
+    }
+    for file in (package_root / "src").rglob("*.cpp"):
+        text = read_text(file)
+        text = text.replace('std::exception("', 'std::runtime_error("')
+        for old, new in replacements.get(file, ()):
+            text = text.replace(old, new)
+        file.write_text(text, encoding="utf-8")
+    cmake = package_root / "CMakeLists.txt"
+    text = read_text(cmake)
+    text = text.replace(
+        "target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_JS_LIB})",
+        "target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_JS_LIB} rstrtmgr version crypt32 dxgi)",
+    )
+    cmake.write_text(text, encoding="utf-8")
