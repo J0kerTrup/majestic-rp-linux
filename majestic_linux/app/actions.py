@@ -19,7 +19,7 @@ from ..runtime.wine import ensure_egs_launcher_symlink, prepare_optional_storage
 from ..radio.doctor import build_radio_report, radio_safe_env
 from .context import load_context
 
-SETUP_MARKER_NAME = ".majestic-runner-setup-v5.done"
+SETUP_MARKER_NAME = ".majestic-runner-setup-v6.done"
 
 
 def _patch_root(config, result: DetectionResult) -> Path:

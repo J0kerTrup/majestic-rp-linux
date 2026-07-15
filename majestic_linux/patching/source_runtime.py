@@ -59,6 +59,9 @@ function JO_adaptLaunchConfigForProton(launchOptionsPath) {{
     const changed = JO_patchJsonFile(launchOptionsPath, (config) => {{
         let changed = false;
         if (String(config.gtaPath || '').startsWith('Z:\\\\') || String(config.gtaPath || '') !== JO_PROTON_GTA_PATH) {{ config.gtaPath = JO_PROTON_GTA_PATH; changed = true; }}
+        if (config.protonRuntime !== true) {{ config.protonRuntime = true; changed = true; }}
+        const protonLauncherPath = path.win32.join(JO_PROTON_GTA_PATH, 'GTAVLauncher.exe');
+        if (config.protonLauncherPath !== protonLauncherPath) {{ config.protonLauncherPath = protonLauncherPath; changed = true; }}
         if (['steam', 'rgl', 'egs'].includes(JO_PROTON_NATIVE_PLATFORM) && config.gtaPlatform !== JO_PROTON_NATIVE_PLATFORM) {{ config.gtaPlatform = JO_PROTON_NATIVE_PLATFORM; changed = true; }}
         if (config.debug !== false) {{ config.debug = false; changed = true; }}
         if (JO_PROTON_DISABLE_CEF_GPU && config.cefUseHardwareAcceleration !== false) {{ config.cefUseHardwareAcceleration = false; changed = true; }}

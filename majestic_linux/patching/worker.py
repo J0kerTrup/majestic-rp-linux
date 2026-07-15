@@ -52,6 +52,9 @@ function adaptLaunchConfigForProton(launchOptionsPath) {{
   patchJsonFile(launchOptionsPath, (config) => {{
     let changed = false;
     if (String(config.gtaPath || '').startsWith('Z:\\\\') || String(config.gtaPath || '') !== protonGtaPath) {{ config.gtaPath = protonGtaPath; changed = true; }}
+    if (config.protonRuntime !== true) {{ config.protonRuntime = true; changed = true; }}
+    const protonLauncherPath = path.win32.join(protonGtaPath, 'GTAVLauncher.exe');
+    if (config.protonLauncherPath !== protonLauncherPath) {{ config.protonLauncherPath = protonLauncherPath; changed = true; }}
     if (['steam', 'rgl', 'egs'].includes(nativePlatform) && config.gtaPlatform !== nativePlatform) {{ config.gtaPlatform = nativePlatform; changed = true; }}
     if (config.debug !== false) {{ config.debug = false; changed = true; }}
     if (disableCefGpu && config.cefUseHardwareAcceleration !== false) {{ config.cefUseHardwareAcceleration = false; changed = true; }}
@@ -114,7 +117,11 @@ function patchPermissionCache(multiplayerPath) {{
 function adaptLaunchConfigForProton(launchConfigPath) {{
   patchJsonFile(launchConfigPath, (config) => {{
     config.gtaPath = protonGtaPath;
-    if (['steam', 'rgl', 'egs'].includes(nativePlatform)) config.gtaPlatform = nativePlatform;
+    config.protonRuntime = true;
+    config.protonLauncherPath = path.win32.join(protonGtaPath, 'GTAVLauncher.exe');
+    // A rebuilt native patcher uses the fields above and retains the store.
+    // Released binaries need the legacy platform fallback.
+    if (!process.env.MAJESTIC_NATIVE_CPP_PATCHED && ['steam', 'rgl', 'egs'].includes(nativePlatform)) config.gtaPlatform = nativePlatform;
     config.debug = false;
     if (process.env.MAJESTIC_DISABLE_CEF_GPU !== '0') config.cefUseHardwareAcceleration = false;
     if (config.multiplayerPath) patchPermissionCache(config.multiplayerPath);
