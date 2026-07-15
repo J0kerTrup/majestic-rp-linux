@@ -19,7 +19,7 @@ from ..runtime.wine import ensure_egs_launcher_symlink, prepare_optional_storage
 from ..radio.doctor import build_radio_report, radio_safe_env
 from .context import load_context
 
-SETUP_MARKER_NAME = ".majestic-runner-setup.done"
+SETUP_MARKER_NAME = ".majestic-runner-setup-v2.done"
 
 
 def _patch_root(config, result: DetectionResult) -> Path:
@@ -35,11 +35,17 @@ def _setup_marker(compatdata: Path) -> Path:
 
 
 def _setup_is_complete(config, result: DetectionResult) -> bool:
+    if result.compatdata_path is None or result.majestic_exe is None:
+        return False
+    marker = _setup_marker(result.compatdata_path)
+    if not marker.exists():
+        return False
+    launcher_root = result.majestic_exe.parent
+    app_asar_candidates = (launcher_root / "app.asar", launcher_root / "resources" / "app.asar")
+    if any(app_asar.is_file() and app_asar.stat().st_mtime > marker.stat().st_mtime for app_asar in app_asar_candidates):
+        return False
     return (
-        result.compatdata_path is not None
-        and result.majestic_exe is not None
-        and _setup_marker(result.compatdata_path).exists()
-        and emoji_font_fix_is_applied(result.compatdata_path)
+        emoji_font_fix_is_applied(result.compatdata_path)
         and (not config.tricks_powershell or powershell_setup_is_complete(result.compatdata_path))
     )
 

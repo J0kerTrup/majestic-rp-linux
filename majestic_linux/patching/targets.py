@@ -16,6 +16,8 @@ def resolve_targets(input_path: Path) -> PatchTargets:
     app_asar_from_resources = root / "resources" / "app.asar"
     sibling_app_asar = root.parent / "app.asar"
     extracted_index = root / "dist" / "electron" / "main" / "index.js"
+    modern_index = root / "out" / "main" / "index.js"
+    modern_worker = root / "out" / "main" / "patcherWorker.js"
     source_files = [
         root / "src" / "electron" / "main" / "utils" / "findGTA.js",
         root / "src" / "electron" / "main" / "utils" / "revalidateGTA.js",
@@ -39,9 +41,11 @@ def resolve_targets(input_path: Path) -> PatchTargets:
         return PatchTargets("asar", temp, root.parent, sibling_app_asar, root, temp)
     if extracted_index.is_file():
         return PatchTargets("extracted", root, root.parent, None, root)
+    if modern_index.is_file() and modern_worker.is_file():
+        return PatchTargets("modern", root, root.parent, None, root)
     raise PatchError(
         "Could not locate Majestic app files. Pass resources/, resources/app.asar, "
-        "resources/app.asar.unpacked, extracted app root, or recovered source root."
+        "resources/app.asar.unpacked, an extracted dist/ or out/ app root, or recovered source root."
     )
 
 

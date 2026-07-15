@@ -79,11 +79,82 @@ parentPort.on('message', async (launchOptionsPath) => {{
 """
 
 
+def modern_worker_adapter(permissions: str) -> str:
+    values = parse_permissions(permissions)
+    return f"""/* {MARKER}: Proton adapter for Majestic utility-process native patcher. */
+import {{ createRequire }} from 'node:module';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const requireFromHere = createRequire(import.meta.url);
+const parentPort = process.parentPort;
+const protonGtaPath = process.env.MAJESTIC_GTA_WIN_PATH || 'G:\\\\';
+const requestedPlatform = process.env.MAJESTIC_PROTON_PLATFORM || 'rgl';
+const nativePlatform = process.env.MAJESTIC_PROTON_NATIVE_PLATFORM || (requestedPlatform === 'steam' ? 'rgl' : requestedPlatform);
+const permissions = {values};
+
+function patchJsonFile(filePath, patcherFn) {{
+  if (!filePath || !fs.existsSync(filePath)) return false;
+  const config = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  patcherFn(config);
+  fs.writeFileSync(filePath, JSON.stringify(config, null, 2));
+  return true;
+}}
+
+function patchPermissionCache(multiplayerPath) {{
+  const cacheRoot = path.join(multiplayerPath || '', 'cache');
+  if (!fs.existsSync(cacheRoot)) return;
+  const data = Buffer.from([...permissions, 255]);
+  for (const name of fs.readdirSync(cacheRoot)) {{
+    const dir = path.join(cacheRoot, name);
+    if (fs.existsSync(dir) && fs.lstatSync(dir).isDirectory()) fs.writeFileSync(path.join(dir, 'permissions'), data);
+  }}
+}}
+
+function adaptLaunchConfigForProton(launchConfigPath) {{
+  patchJsonFile(launchConfigPath, (config) => {{
+    config.gtaPath = protonGtaPath;
+    if (['steam', 'rgl', 'egs'].includes(nativePlatform)) config.gtaPlatform = nativePlatform;
+    config.debug = false;
+    if (process.env.MAJESTIC_DISABLE_CEF_GPU !== '0') config.cefUseHardwareAcceleration = false;
+    if (config.multiplayerPath) patchPermissionCache(config.multiplayerPath);
+  }});
+}}
+
+if (!parentPort) {{
+  process.stderr.write('patcherWorker: process.parentPort missing, exiting\\n');
+  process.exit(2);
+}}
+
+parentPort.on('message', (event) => {{
+  try {{
+    const message = event.data;
+    if (typeof message !== 'object' || message === null || typeof message.launchConfigPath !== 'string') {{
+      parentPort.postMessage({{ success: false, error: 'ERR_WORKER_BAD_INPUT' }});
+      return;
+    }}
+    adaptLaunchConfigForProton(message.launchConfigPath);
+    const result = requireFromHere('majestic-patcher').patchMultiplayer(message.launchConfigPath);
+    parentPort.postMessage({{
+      success: Boolean(result?.success),
+      error: typeof result?.error === 'string' ? result.error : '',
+    }});
+  }} catch (error) {{
+    parentPort.postMessage({{ success: false, error: error instanceof Error ? error.message : String(error) }});
+  }} finally {{
+    setImmediate(() => process.exit(0));
+  }}
+}});
+"""
+
+
 def patch_worker(file: Path, *, dry_run: bool, permissions: str) -> PatchStatus:
     status = PatchStatus(file)
-    text = worker_adapter(permissions)
+    current = read_text(file) if file.exists() else ""
+    modern = file.name == "patcherWorker.js" or "process.parentPort" in current or "utility-process" in current
+    text = modern_worker_adapter(permissions) if modern else worker_adapter(permissions)
     if file.exists() and read_text(file) == text:
         return status
     write_text(file, text, dry_run=dry_run, status=status)
-    status.details.append("worker adapter")
+    status.details.append("utility-process worker adapter" if modern else "worker adapter")
     return status

@@ -55,12 +55,19 @@ def patch_js_tree(
     try:
         if targets.mode == "source":
             statuses.extend(patch_source_tree(targets.app_root, dry_run=dry_run, permissions=permissions))
+        elif targets.mode == "modern":
+            worker = targets.app_root / "out" / "main" / "patcherWorker.js"
+            statuses.append(patch_worker(worker, dry_run=dry_run, permissions=permissions))
         else:
             extract_asar(targets, dry_run=dry_run, logger=logger)
-            index = targets.app_root / "dist" / "electron" / "main" / "index.js"
-            worker = targets.unpacked_root / "dist" / "electron" / "main" / "gamePatcher.js"
-            statuses.append(patch_index(index, dry_run=dry_run, permissions=permissions))
-            statuses.append(patch_worker(worker, dry_run=dry_run, permissions=permissions))
+            modern_worker = targets.app_root / "out" / "main" / "patcherWorker.js"
+            if modern_worker.is_file():
+                statuses.append(patch_worker(modern_worker, dry_run=dry_run, permissions=permissions))
+            else:
+                index = targets.app_root / "dist" / "electron" / "main" / "index.js"
+                worker = targets.unpacked_root / "dist" / "electron" / "main" / "gamePatcher.js"
+                statuses.append(patch_index(index, dry_run=dry_run, permissions=permissions))
+                statuses.append(patch_worker(worker, dry_run=dry_run, permissions=permissions))
             repack_asar(targets, dry_run=dry_run, logger=logger)
     finally:
         cleanup(targets, logger)
