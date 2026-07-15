@@ -44,7 +44,12 @@ def build_proton_command(
             "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(steam_root or ""),
             "STEAM_COMPAT_APP_ID": app_id,
             "MAJESTIC_PLATFORM": platform,
-            "MAJESTIC_PROTON_PLATFORM": config.native_platform or platform,
+            # Launcher 6.x needs two distinct values. BackupService stages the
+            # DRM helper for the real store, while the native patcher may need
+            # a different Proton-compatible launch method (Steam -> RGL).
+            "MAJESTIC_GTA_STORE_PLATFORM": platform,
+            "MAJESTIC_PROTON_PLATFORM": platform,
+            "MAJESTIC_PROTON_NATIVE_PLATFORM": config.native_platform,
             "MAJESTIC_DISABLE_CEF_GPU": "1" if config.disable_cef_gpu else "0",
             "MAJESTIC_LAUNCHER_FLAGS": config.launcher_flags,
             "GTA_PATH": str(wine_mapping.gta_path),

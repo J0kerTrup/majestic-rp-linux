@@ -18,7 +18,8 @@ from .common import (
     write_text,
 )
 
-MODERN_INDEX_MARKER = "MAJESTIC_PROTON_MODERN_INSTALL_V1"
+MODERN_INDEX_MARKER = "MAJESTIC_PROTON_MODERN_INSTALL_V2"
+MODERN_INDEX_MARKER_V1 = "MAJESTIC_PROTON_MODERN_INSTALL_V1"
 
 
 def patch_modern_index(file: Path, *, dry_run: bool) -> PatchStatus:
@@ -33,13 +34,24 @@ def patch_modern_index(file: Path, *, dry_run: bool) -> PatchStatus:
     src = read_text(file)
     if MODERN_INDEX_MARKER in src:
         return status
+    if MODERN_INDEX_MARKER_V1 in src:
+        src = src.replace(MODERN_INDEX_MARKER_V1, MODERN_INDEX_MARKER, 1)
+        src = src.replace(
+            "const JO_PROTON_PLATFORM = process.env.MAJESTIC_PROTON_PLATFORM;",
+            "const JO_PROTON_PLATFORM = process.env.MAJESTIC_GTA_STORE_PLATFORM || process.env.MAJESTIC_PLATFORM;",
+            1,
+        )
+        validate_text(src, file)
+        write_text(file, src, dry_run=dry_run, status=status)
+        status.details.append("modern pre-backup platform migration v2")
+        return status
     needle = "    let install = this.deps.install.get();"
     if needle not in src:
         raise PatchError(f"{file}: could not find Launcher 6.x install-selection anchor")
     replacement = f"""    /* {MODERN_INDEX_MARKER}: select Proton GTA before backup DRM staging. */
     let install = this.deps.install.get();
     const JO_PROTON_GTA_PATH = process.env.MAJESTIC_GTA_WIN_PATH;
-    const JO_PROTON_PLATFORM = process.env.MAJESTIC_PROTON_PLATFORM;
+    const JO_PROTON_PLATFORM = process.env.MAJESTIC_GTA_STORE_PLATFORM || process.env.MAJESTIC_PLATFORM;
     const JO_PROTON_INSTALL_SOURCE = {{ steam: \"steam\", egs: \"epic\", rgl: \"rockstar\" }}[JO_PROTON_PLATFORM];
     if (JO_PROTON_GTA_PATH && JO_PROTON_INSTALL_SOURCE) {{
       install = {{ path: JO_PROTON_GTA_PATH, source: JO_PROTON_INSTALL_SOURCE }};
