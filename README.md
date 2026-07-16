@@ -15,7 +15,11 @@ Support Discord: <https://discord.gg/fkNExq39Yg>
 - Steam GTA V with a Proton prefix, or an explicitly configured Proton/GTA path.
 - `protontricks` or `winetricks` for first-run prefix setup.
 - `asar` for launcher `app.asar` patching.
-- `mingw-w64-gcc` and `cmake` for the Launcher 6.x native patcher rebuild.
+- `cmake`, an `x86_64-w64-mingw32` GCC toolchain, and Node.js development
+  headers for the Launcher 6.x native patcher rebuild. Package names vary by
+  distribution (for example `mingw-w64-gcc`/`nodejs` on Arch,
+  `g++-mingw-w64-x86-64`/`libnode-dev` on Debian-based systems, and
+  `mingw64-gcc-c++`/`nodejs-devel` on Fedora-based systems).
 - Optional: `xdotool` for Caps Lock cleanup before launch.
 
 Keep the project path ASCII-only. Proton, Wine, and some shell tools still get

@@ -11,6 +11,95 @@ from .common import PatchStatus, read_text, write_text
 
 
 NATIVE_MARKER = "MAJESTIC_PROTON_NATIVE_PATCH_V1"
+MINGW_TARGET = "x86_64-w64-mingw32"
+
+
+def _compiler_query(compiler: str, argument: str) -> Path | None:
+    try:
+        result = subprocess.run(
+            [compiler, argument],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    value = result.stdout.strip()
+    if not value or value == argument.removeprefix("-print-file-name="):
+        return None
+    return Path(value)
+
+
+def _first_directory_with_file(candidates: list[Path], filename: str) -> Path | None:
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if (candidate / filename).is_file():
+            return candidate
+    return None
+
+
+def _mingw_include_dir(compiler: str) -> Path:
+    compiler_path = Path(compiler).resolve()
+    sysroot = _compiler_query(compiler, "-print-sysroot")
+    candidates = [
+        Path("/usr") / MINGW_TARGET / "include",
+        Path("/usr") / MINGW_TARGET / "sys-root" / "mingw" / "include",
+        compiler_path.parent.parent / MINGW_TARGET / "include",
+        compiler_path.parent.parent / MINGW_TARGET / "sys-root" / "mingw" / "include",
+    ]
+    if sysroot:
+        candidates.extend((sysroot / "include", sysroot / "mingw" / "include"))
+    include = _first_directory_with_file(candidates, "windows.h")
+    if include is None:
+        raise PatchError(
+            "Cannot find MinGW Windows headers (windows.h). "
+            f"Install the headers for the {MINGW_TARGET} cross-compiler."
+        )
+    return include
+
+
+def _mingw_runtime_dll(compiler: str, filename: str) -> Path | None:
+    queried = _compiler_query(compiler, f"-print-file-name={filename}")
+    if queried and queried.is_file():
+        return queried
+    include = _mingw_include_dir(compiler)
+    for root in (include.parent, include.parent.parent):
+        for directory in ("bin", "lib"):
+            candidate = root / directory / filename
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def _node_include_dir() -> Path:
+    candidates = [
+        Path("/usr/include/node"),
+        Path("/usr/local/include/node"),
+        Path("/usr/include/nodejs/src"),
+    ]
+    pkg_config = shutil.which("pkg-config")
+    if pkg_config:
+        try:
+            result = subprocess.run(
+                [pkg_config, "--cflags-only-I", "libnode"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            candidates[:0] = [
+                Path(flag[2:])
+                for flag in result.stdout.split()
+                if flag.startswith("-I") and len(flag) > 2
+            ]
+        except subprocess.CalledProcessError:
+            pass
+    include = _first_directory_with_file(candidates, "node.h")
+    if include is None:
+        raise PatchError("Cannot find Node.js development headers (node.h); install the distro's Node.js development package.")
+    return include
 
 
 def _replace_once(source: str, old: str, new: str, file: Path) -> str:
@@ -191,13 +280,19 @@ def build_native_module(package_root: Path, launcher_exe: Path, *, dry_run: bool
 
     # The published source is built by MSVC and contains casing/stdlib assumptions.
     _prepare_mingw_source(package_root)
+    compiler = tools["x86_64-w64-mingw32-g++"]
+    assert compiler is not None
+    mingw_include = _mingw_include_dir(compiler)
+    node_include = _node_include_dir()
     with tempfile.TemporaryDirectory(prefix="majestic-native-cmake-") as temp_raw:
         temp = Path(temp_raw)
         include = temp / "include"
         include.mkdir()
-        mingw_include = Path("/usr/x86_64-w64-mingw32/include")
         for requested, actual in (("Windows.h", "windows.h"), ("Shlobj.h", "shlobj.h"), ("Shlwapi.h", "shlwapi.h"), ("Psapi.h", "psapi.h"), ("RestartManager.h", "restartmanager.h")):
-            (include / requested).symlink_to(mingw_include / actual)
+            target = mingw_include / actual
+            if not target.is_file():
+                raise PatchError(f"MinGW header missing: {target}")
+            (include / requested).symlink_to(target)
 
         exports = subprocess.run(
             [tools["x86_64-w64-mingw32-objdump"], "-p", str(launcher_exe)],
@@ -220,7 +315,7 @@ def build_native_module(package_root: Path, launcher_exe: Path, *, dry_run: bool
             # options while still compiling the non-DEBUG production path.
             "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O0 -DNDEBUG",
             f"-DCMAKE_CXX_FLAGS={flags}",
-            f"-DCMAKE_JS_INC=/usr/include/node;{node_api};{include}",
+            f"-DCMAKE_JS_INC={node_include};{node_api};{include}",
             f"-DCMAKE_JS_LIB={node_lib}", f"-DNAPI_INCLUDE_HEADERS={node_api}",
         ], check=True)
         jobs = str(min(os.cpu_count() or 4, 16))
@@ -233,8 +328,8 @@ def build_native_module(package_root: Path, launcher_exe: Path, *, dry_run: bool
         shutil.copy2(built, output)
 
     # libstdc++/libgcc are static, but GCC's std::thread still uses winpthreads.
-    pthread = Path("/usr/x86_64-w64-mingw32/bin/libwinpthread-1.dll")
-    if pthread.is_file():
+    pthread = _mingw_runtime_dll(compiler, "libwinpthread-1.dll")
+    if pthread is not None:
         shutil.copy2(pthread, output.parent / pthread.name)
     status.changed = True
     status.details.append("rebuilt native Proton addon")
