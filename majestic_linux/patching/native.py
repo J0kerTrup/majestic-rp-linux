@@ -150,12 +150,28 @@ def _patch_game_cpp(file: Path, *, dry_run: bool) -> PatchStatus:
     status = PatchStatus(file)
     source = read_text(file)
     if NATIVE_MARKER in source:
+        old = (
+            "\t// MAJESTIC_PROTON_NATIVE_PATCH_V1: protocol launchers escape the active Wine prefix.\n"
+            "\t// Keep gamePlatform as the real store for validation and backup staging,\n"
+            "\t// but start GTAVLauncher.exe directly inside the current Proton prefix.\n"
+            "\tif (cfg.protonRuntime)\n"
+        )
+        new = (
+            "\t// MAJESTIC_PROTON_NATIVE_PATCH_V1: protocol launchers can escape the active Wine prefix.\n"
+            "\t// Keep the direct launcher for RGL/Steam, but let EGS request its ownership ticket\n"
+            "\t// through EpicPlatform's com.epicgames.launcher:// protocol.\n"
+            '\tif (cfg.protonRuntime && cfg.gamePlatform != "egs")\n'
+        )
+        if old in source:
+            source = source.replace(old, new, 1)
+            write_text(file, source, dry_run=dry_run, status=status)
+            status.details.append("restored EGS protocol launch")
         return status
     old = '    platform->Start(cfg.gamePath);\n    MJ_VMP_END();\n'
-    new = f'''\t// {NATIVE_MARKER}: protocol launchers escape the active Wine prefix.
-\t// Keep gamePlatform as the real store for validation and backup staging,
-\t// but start GTAVLauncher.exe directly inside the current Proton prefix.
-\tif (cfg.protonRuntime)
+    new = f'''\t// {NATIVE_MARKER}: protocol launchers can escape the active Wine prefix.
+\t// Keep the direct launcher for RGL/Steam, but let EGS request its ownership ticket
+\t// through EpicPlatform's com.epicgames.launcher:// protocol.
+\tif (cfg.protonRuntime && cfg.gamePlatform != "egs")
 \t{{
 \t\tconst auto launcherPath = cfg.protonLauncherPath.empty()
 \t\t\t? cfg.gamePath / "GTAVLauncher.exe"
@@ -191,7 +207,7 @@ def _patch_game_cpp(file: Path, *, dry_run: bool) -> PatchStatus:
 '''
     source = _replace_once(source, old, new, file)
     write_text(file, source, dry_run=dry_run, status=status)
-    status.details.append("direct Proton GTAVLauncher start")
+    status.details.append("platform-aware Proton launch")
     return status
 
 
