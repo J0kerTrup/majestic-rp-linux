@@ -42,7 +42,7 @@ def build_proton_command(
         {
             "STEAM_COMPAT_DATA_PATH": str(compatdata),
             "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(steam_root or ""),
-            "STEAM_COMPAT_APP_ID": app_id,
+            "STEAM_COMPAT_APP_ID": app_id if platform == "steam" else "0",
             "MAJESTIC_PLATFORM": platform,
             # Launcher 6.x needs two distinct values. BackupService stages the
             # DRM helper for the real store, while the native patcher may need
@@ -76,7 +76,16 @@ def build_proton_command(
         env["WINEDLLOVERRIDES"] = _with_dll_override(env.get("WINEDLLOVERRIDES", ""), "winegstreamer=d")
     apply_library_path(env, getattr(config, "runtime_library_paths", []))
     argv = [str(proton_path), "waitforexitandrun", str(majestic_exe), *shlex.split(config.launcher_flags)]
-    argv = apply_steam_compat(argv, env, config, app_id=app_id, proton_path=proton_path, steam_root=steam_root, gta_path=wine_mapping.gta_path)
+    argv = apply_steam_compat(
+        argv,
+        env,
+        config,
+        app_id=app_id,
+        proton_path=proton_path,
+        steam_root=steam_root,
+        gta_path=wine_mapping.gta_path,
+        platform=platform,
+    )
     argv = apply_launch_options(argv, env, config.launch_options)
     return ProtonCommand(argv, env, majestic_exe.parent)
 
