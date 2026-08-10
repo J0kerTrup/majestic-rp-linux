@@ -60,6 +60,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return commands[args.command](args)
     except RunnerError as exc:
-        logger = setup_logging(args.debug, Path("logs"))
+        logger = setup_logging(args.debug, None)
         logger.error("%s", exc)
         return 2

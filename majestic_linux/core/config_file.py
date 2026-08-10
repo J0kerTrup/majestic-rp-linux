@@ -24,6 +24,11 @@ def default_config_path() -> Path:
     return xdg_config_home() / CONFIG_DIR_NAME / CONFIG_FILE_NAME
 
 
+def cache_dir() -> Path:
+    """Return the cache directory next to the runner config."""
+    return xdg_config_home() / CONFIG_DIR_NAME / "cache"
+
+
 def resolve_config_path(path: Path | str | None = None) -> Path:
     if path is None or str(path) == "":
         return default_config_path()

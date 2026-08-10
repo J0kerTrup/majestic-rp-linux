@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from ..core.config_file import cache_dir
+
 
 def prepare_proton_runtime_fixups(proton_path: Path, *, dry_run: bool, logger: logging.Logger | None = None) -> list[Path]:
     paths: list[Path] = []
@@ -40,7 +42,7 @@ def _prepare_libbz2_aliases(*, dry_run: bool, logger: logging.Logger | None) -> 
             if logger:
                 logger.warning("Cannot prepare libbz2.so.1.0 alias for %s: source libbz2.so.1 not found", arch)
             continue
-        root = (Path.cwd() / "cache" / "proton-libs" / arch).resolve()
+        root = (cache_dir() / "proton-libs" / arch).resolve()
         target = root / "libbz2.so.1.0"
         roots.append(root)
         needs_update = dry_run or not (target.exists() or target.is_symlink()) or target.resolve() != source.resolve()

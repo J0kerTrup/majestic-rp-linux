@@ -65,6 +65,7 @@ class RunnerConfig:
     repair_wheel_error_threshold: int = 25
     radio_disable_winegstreamer: bool = False
     runtime_library_paths: list[Path] | None = None
+    log_directory: Path | None = None
 
 def load_config(config_path: Path | str | None = None, *, dry_run: bool | None = None) -> RunnerConfig:
     path = resolve_config_path(config_path)
@@ -125,6 +126,7 @@ def load_config(config_path: Path | str | None = None, *, dry_run: bool | None =
         repair_gta_conflicts_on_patch=parse_bool(values.get("REPAIR_GTA_CONFLICTS_ON_PATCH"), True),
         repair_multiplayer_cache_on_patch=parse_bool(values.get("REPAIR_MULTIPLAYER_CACHE_ON_PATCH"), True),
         repair_wheel_error_threshold=parse_int(values.get("REPAIR_WHEEL_ERROR_THRESHOLD"), 25),
+        log_directory=parse_path(values.get("MAJESTIC_LOG_DIRECTORY")),
     )
     if dry_run is not None:
         cfg.dry_run = dry_run

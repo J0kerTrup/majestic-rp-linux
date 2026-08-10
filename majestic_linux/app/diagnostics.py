@@ -28,7 +28,7 @@ py_platform = importlib.import_module("platform")
 
 
 def cmd_config(args: argparse.Namespace) -> int:
-    logger = setup_logging(args.debug, Path("logs"))
+    logger = setup_logging(args.debug, None)
     path = resolve_config_path(args.config)
     created = ensure_config_file(path, logger)
     print(f"Config:  {path}")
