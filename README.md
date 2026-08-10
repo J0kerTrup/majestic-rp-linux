@@ -249,7 +249,6 @@ MAJESTIC_LAUNCH_OPTIONS="gamescope -W 1920 -H 1080 -r 144 -f -- %command%"
 MAJESTIC_LAUNCH_OPTIONS="mangohud %command%"
 MAJESTIC_LAUNCH_OPTIONS="gamemoderun mangohud %command%"
 MAJESTIC_LAUNCH_OPTIONS="MANGOHUD=1 DXVK_HUD=fps %command%"
-MAJESTIC_LAUNCH_OPTIONS="~/.local/bin/game-wrapper gamescope -W 1920 -H 1080 -r 144 -f --force-grab-cursor -- %command%"
 ```
 
 Environment assignments before `%command%` are applied to the launch

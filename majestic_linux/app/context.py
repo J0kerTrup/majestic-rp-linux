@@ -18,9 +18,9 @@ class AppContext:
 
 
 def load_context(args: argparse.Namespace) -> tuple[AppContext, object]:
-    logger = setup_logging(args.debug, Path("logs"))
     config = load_config(args.config, dry_run=args.dry_run or None)
-    logger = setup_logging(args.debug, Path("logs"), config.log_level)
+    log_dir = config.log_directory / "logs" if config.log_directory else None
+    logger = setup_logging(args.debug, log_dir, config.log_level)
     logger.debug("Config: %s", config_summary(config))
     result = asyncio.run(detect_all_async(config, logger))
     return AppContext(config, result), logger

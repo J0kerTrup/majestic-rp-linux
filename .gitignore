@@ -1,20 +1,19 @@
 # Logs
-logs/*
-logs
+logs/
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
 
-
-#IDE
+# IDE
 .idea
 
+# Config
+majestic-runner.conf
+
 # Python cache
-cache
+cache/
 __pycache__/
 *.py[cod]
+*.pyc
+*.pyo
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json

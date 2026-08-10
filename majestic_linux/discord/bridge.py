@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ..core.config import RunnerConfig
+from ..core.config_file import cache_dir
 from ..runtime.sidecars import SidecarContext, SidecarHandle, SidecarSpec, configure_remote_debug_sidecar, stop_sidecar
 
 DiscordBridge = SidecarHandle
@@ -16,9 +17,9 @@ def is_url(value: str) -> bool:
     return value.startswith(("http://", "https://"))
 
 
-def cache_path_for_url(url: str, cache_dir: Path = Path("cache")) -> Path:
+def cache_path_for_url(url: str, cache_directory: Path | None = None) -> Path:
     name = Path(urlparse(url).path).name or "discord-rpc-bridge.exe"
-    return cache_dir / name
+    return (cache_directory or cache_dir()) / name
 
 
 def download_bridge(url: str, output: Path, logger: logging.Logger | None = None) -> Path:
@@ -59,8 +60,8 @@ def find_discord_bridge(config: RunnerConfig, compatdata: Path, logger: logging.
         Path("winediscordipcbridge.exe.so"),
         Path("bridge.exe"),
         Path("rpc-bridge.exe"),
-        Path("cache/winediscordipcbridge.exe"),
-        Path("cache/bridge.exe"),
+        cache_dir() / "winediscordipcbridge.exe",
+        cache_dir() / "bridge.exe",
         compatdata / "pfx" / "drive_c" / "winediscordipcbridge.exe",
         compatdata / "pfx" / "drive_c" / "bridge.exe",
     ]

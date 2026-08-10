@@ -31,7 +31,12 @@ def ensure_installer(config: RunnerConfig, compatdata: Path, *, dry_run: bool, l
     if dry_run:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(config.installer_url, target)
+    req = urllib.request.Request(
+        config.installer_url,
+        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    )
+    with urllib.request.urlopen(req) as response, open(target, 'wb') as out_file:
+        out_file.write(response.read())
     return target
 
 
