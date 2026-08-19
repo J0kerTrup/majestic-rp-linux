@@ -36,6 +36,13 @@ MAJESTIC_STORAGE_PATH=
 MAJESTIC_STORAGE_WINE_DRIVE=m
 MAJESTIC_PERMISSIONS=1
 
+# Optional path to a prebuilt patched majestic-patcher.node. Launcher 6.1+
+# ships the native addon without C++ sources, so when no src/ is present the
+# patcher copies this binary into the package before repacking app.asar.
+# Point it at the patched build from an older launcher, e.g.:
+#   .../6.0.13.unpacked/resources/app.asar.unpacked/node_modules/majestic-patcher/build/Release/majestic-patcher.node
+MAJESTIC_NATIVE_BINARY=
+
 # Launcher installer, used when Majestic Launcher.exe is missing.
 MAJESTIC_INSTALLER_URL="https://majestic-linux.com/MajesticLauncherSetup.repacked.exe"
 MAJESTIC_INSTALLER_PATH=

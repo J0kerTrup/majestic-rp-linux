@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -270,6 +271,43 @@ def patch_native_source_tree(package_root: Path, *, dry_run: bool = False) -> li
         _patch_game_cpp(required[2], dry_run=dry_run),
         _patch_rockstar_cpp(required[3], dry_run=dry_run),
     ]
+
+
+_NODE_REQUIRE_RE = re.compile(r"require\(\s*['\"](\./[^'\"]+\.node)['\"]\s*\)")
+
+
+def inject_prebuilt_native(package_root: Path, binary_path: Path, *, dry_run: bool = False) -> PatchStatus | None:
+    """Copy a prebuilt patched native addon into a source-less majestic-patcher package.
+
+    Launcher 6.1+ ships the native addon as a prebuilt binary without the C++
+    sources, so it cannot be rebuilt in place. This injects an already-patched
+    .node (and its winpthread runtime DLL, if present) at the path the package
+    index.js requires. Returns None when the package has no .node require anchor.
+    """
+    index = package_root / "index.js"
+    if not index.is_file():
+        return None
+    match = _NODE_REQUIRE_RE.search(read_text(index))
+    if not match:
+        return None
+    target = (package_root / match.group(1)).resolve()
+    if not binary_path.is_file():
+        raise PatchError(f"Prebuilt native addon not found: {binary_path}")
+    status = PatchStatus(target)
+    if dry_run:
+        status.details.append(f"would copy prebuilt native addon to {target}")
+        status.changed = True
+        return status
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(binary_path, target)
+    status.details.append(f"copied prebuilt native addon to {target}")
+    for dll_name in ("libwinpthread-1.dll",):
+        dll_src = binary_path.parent / dll_name
+        if dll_src.is_file():
+            shutil.copy2(dll_src, target.parent / dll_name)
+            status.details.append(f"copied {dll_name} alongside native addon")
+    status.changed = True
+    return status
 
 
 def build_native_module(package_root: Path, launcher_exe: Path, *, dry_run: bool = False) -> PatchStatus:
