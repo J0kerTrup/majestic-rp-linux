@@ -16,8 +16,8 @@ from .common import (
     read_text,
     validate_text,
 )
-from .index import patch_index, patch_modern_index
-from .native import build_native_module, patch_native_source_tree
+from .index import patch_index, patch_modern_index, patch_updater
+from .native import build_native_module, inject_prebuilt_native, patch_native_source_tree
 from .source_find import patch_source_find_gta, patch_source_revalidate_gta
 from .source_runtime import patch_source_game, patch_source_patcher
 from .targets import cleanup, extract_asar, find_js_files, repack_asar, resolve_targets
@@ -48,6 +48,7 @@ def patch_js_tree(
     dry_run: bool = False,
     logger: logging.Logger | None = None,
     permissions: str = "1",
+    native_binary: Path | None = None,
 ) -> PatchReport:
     targets = resolve_targets(root)
     statuses: list[PatchStatus] = []
@@ -59,6 +60,7 @@ def patch_js_tree(
         elif targets.mode == "modern":
             index = targets.app_root / "out" / "main" / "index.js"
             worker = targets.app_root / "out" / "main" / "patcherWorker.js"
+            statuses.append(patch_updater(index, dry_run=dry_run))
             statuses.append(patch_modern_index(index, dry_run=dry_run))
             statuses.append(patch_worker(worker, dry_run=dry_run, permissions=permissions))
         else:
@@ -70,9 +72,14 @@ def patch_js_tree(
             if (native_package / "src").is_dir():
                 launcher_exe = targets.resources_dir.parent / "Majestic Launcher.exe"
                 statuses.append(build_native_module(native_package, launcher_exe, dry_run=dry_run))
+            elif native_binary is not None:
+                injected = inject_prebuilt_native(native_package, native_binary, dry_run=dry_run)
+                if injected is not None:
+                    statuses.append(injected)
             modern_worker = targets.app_root / "out" / "main" / "patcherWorker.js"
             if modern_worker.is_file():
                 modern_index = targets.app_root / "out" / "main" / "index.js"
+                statuses.append(patch_updater(modern_index, dry_run=dry_run))
                 statuses.append(patch_modern_index(modern_index, dry_run=dry_run))
                 statuses.append(patch_worker(modern_worker, dry_run=dry_run, permissions=permissions))
             else:

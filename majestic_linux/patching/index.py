@@ -20,6 +20,34 @@ from .common import (
 
 MODERN_INDEX_MARKER = "MAJESTIC_PROTON_MODERN_INSTALL_V2"
 MODERN_INDEX_MARKER_V1 = "MAJESTIC_PROTON_MODERN_INSTALL_V1"
+UPDATER_DISABLED_MARKER = "MAJESTIC_PROTON_UPDATER_DISABLED_V1"
+
+
+def patch_updater(file: Path, *, dry_run: bool) -> PatchStatus:
+    """Disable the auto-updater so the patched launcher is not overwritten.
+
+    Launcher 6.1+ has ``showUpdater = isPackaged || ...`` which downloads
+    the latest release from the CDN and applies it via NSIS installer.
+    Under Proton this defeats the patch and may fail to reinstall.
+    """
+    status = PatchStatus(file)
+    if not file.exists():
+        raise PatchError(f"index.js not found: {file}")
+    src = read_text(file)
+    if UPDATER_DISABLED_MARKER in src:
+        return status
+    needle = "const showUpdater = isPackaged || process.env.SHOW_UPDATER === \"1\";"
+    if needle not in src:
+        return status
+    replacement = (
+        "// Disabled for the local Wine build: skip the launcher self-update gate.\n"
+        "  const showUpdater = false; // " + UPDATER_DISABLED_MARKER
+    )
+    src = src.replace(needle, replacement, 1)
+    validate_text(src, file)
+    write_text(file, src, dry_run=dry_run, status=status)
+    status.details.append("auto-updater disabled")
+    return status
 
 
 def patch_modern_index(file: Path, *, dry_run: bool) -> PatchStatus:

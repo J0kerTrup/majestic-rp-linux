@@ -30,6 +30,7 @@ class RunnerConfig:
     majestic_storage_path: Path | None = None
     majestic_storage_wine_drive: str = "m"
     majestic_permissions: str = "1"
+    native_binary: Path | None = None
     steam_root: Path | None = None
     compatdata_path: Path | None = None
     gta_path: Path | None = None
@@ -94,6 +95,7 @@ def load_config(config_path: Path | str | None = None, *, dry_run: bool | None =
         majestic_storage_path=parse_path(values.get("MAJESTIC_STORAGE_PATH")),
         majestic_storage_wine_drive=(values.get("MAJESTIC_STORAGE_WINE_DRIVE", "m") or "m").lower()[0],
         majestic_permissions=values.get("MAJESTIC_PERMISSIONS", "1"),
+        native_binary=parse_path(values.get("MAJESTIC_NATIVE_BINARY")),
         steam_root=parse_path(values.get("STEAM_ROOT")),
         compatdata_path=parse_path(values.get("STEAM_COMPAT_DATA_PATH")),
         gta_path=parse_path(values.get("GTA_PATH")),
@@ -151,4 +153,5 @@ def config_summary(config: RunnerConfig) -> dict[str, object]:
         "majestic_exe": str(config.majestic_exe) if config.majestic_exe else "",
         "installer_path": str(config.installer_path) if config.installer_path else "",
         "installer_url": config.installer_url,
+        "native_binary": str(config.native_binary) if config.native_binary else "",
     }

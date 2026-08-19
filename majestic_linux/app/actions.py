@@ -93,7 +93,13 @@ def _prepare_prefix_and_launcher(context, logger, *, force: bool = False) -> Non
     apply_win10_mode(config, result.selected_platform, result.compatdata_path, dry_run=config.dry_run, logger=logger)
     apply_powershell(config, result.selected_platform, result.compatdata_path, dry_run=config.dry_run, logger=logger)
     apply_emoji_font_fix(config, result.compatdata_path, result.selected_platform, dry_run=config.dry_run, logger=logger)
-    report = patch_js_tree(_patch_root(config, result), dry_run=config.dry_run, logger=logger, permissions=config.majestic_permissions)
+    report = patch_js_tree(
+        _patch_root(config, result),
+        dry_run=config.dry_run,
+        logger=logger,
+        permissions=config.majestic_permissions,
+        native_binary=config.native_binary,
+    )
     if not config.dry_run:
         marker = _setup_marker(result.compatdata_path)
         marker.parent.mkdir(parents=True, exist_ok=True)
