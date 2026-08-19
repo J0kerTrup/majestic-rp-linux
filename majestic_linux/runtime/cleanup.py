@@ -111,7 +111,6 @@ def find_majestic_cleanup_candidates(compatdata: Path, gta_path: Path | None = N
     paths.append((drive_c / "Games" / "MAJESTIC_GTA", "Majestic GTA multiplayer folder"))
     paths.append((proton_shortcuts / "Majestic Launcher.desktop", "Proton shortcut"))
     paths.extend((path, "Proton shortcut icon") for path in proton_shortcuts.glob("icons/*/apps/*Majestic*.png"))
-    paths.append((drive_c / "MajesticLauncherSetup.exe", "Majestic installer cache"))
 
     for dirname in MAJESTIC_LOCAL_DIRS:
         for launcher_dir in (drive_c / "users").glob(f"*/AppData/Local/{dirname}"):

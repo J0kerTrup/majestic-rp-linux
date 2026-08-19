@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import shlex
 import subprocess
@@ -8,36 +9,45 @@ import urllib.request
 from pathlib import Path
 
 from ..core.config import RunnerConfig
+from ..core.config_file import cache_dir
 from ..core.errors import RunnerError
 from ..detection.paths import find_majestic_exe
 
 
-def installer_target(config: RunnerConfig, compatdata: Path) -> Path:
-    if config.installer_path:
-        return config.installer_path
-    return compatdata / "pfx" / "drive_c" / "MajesticLauncherSetup.exe"
+def installer_target() -> Path:
+    return cache_dir() / "MajesticLauncherSetup.exe"
 
 
-def ensure_installer(config: RunnerConfig, compatdata: Path, *, dry_run: bool, logger: logging.Logger | None = None) -> Path:
-    target = installer_target(config, compatdata)
-    if target.exists():
-        if logger:
-            logger.info("Using existing Majestic installer: %s", target)
-        return target
+def _hash_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def ensure_installer(config: RunnerConfig, *, dry_run: bool, logger: logging.Logger | None = None) -> tuple[Path, bool]:
+    target = installer_target()
+    hash_file = Path(str(target) + ".sha256")
     if not config.installer_url:
         raise RunnerError("Majestic Launcher.exe is missing and MAJESTIC_INSTALLER_URL is empty")
     if logger:
         logger.info("Downloading Majestic installer: %s -> %s", config.installer_url, target)
     if dry_run:
-        return target
+        return target, True
     target.parent.mkdir(parents=True, exist_ok=True)
     req = urllib.request.Request(
         config.installer_url,
         headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     )
-    with urllib.request.urlopen(req) as response, open(target, 'wb') as out_file:
+    tmp = target.with_suffix(".tmp")
+    with urllib.request.urlopen(req) as response, open(tmp, 'wb') as out_file:
         out_file.write(response.read())
-    return target
+    new_hash = _hash_file(tmp)
+    old_hash = hash_file.read_text(encoding="utf-8").strip() if hash_file.exists() else ""
+    needs_install = new_hash != old_hash
+    if needs_install:
+        if logger:
+            logger.info("Installer hash changed, will reinstall")
+    tmp.replace(target)
+    hash_file.write_text(new_hash, encoding="utf-8")
+    return target, needs_install
 
 
 def wait_for_majestic_exe(config: RunnerConfig, compatdata: Path, *, timeout: int, logger: logging.Logger | None = None) -> Path | None:
@@ -62,10 +72,15 @@ def install_majestic_launcher(
     dry_run: bool,
     logger: logging.Logger | None = None,
 ) -> Path | None:
-    existing = find_majestic_exe(config, compatdata)
-    if existing:
-        return existing
-    installer = ensure_installer(config, compatdata, dry_run=dry_run, logger=logger)
+    installer, needs_install = ensure_installer(config, dry_run=dry_run, logger=logger)
+    if not needs_install:
+        existing = find_majestic_exe(config, compatdata)
+        if existing:
+            if logger:
+                logger.info("Installer unchanged, Majestic Launcher.exe is up to date")
+            return existing
+    if not needs_install and logger:
+        logger.info("Installer unchanged, but Majestic Launcher.exe is missing — reinstalling")
     app_id = _steam_app_id(config)
     env = {
         **__import__("os").environ.copy(),

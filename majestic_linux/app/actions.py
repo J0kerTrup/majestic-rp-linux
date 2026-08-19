@@ -57,8 +57,6 @@ def _require_launch_paths(result: DetectionResult) -> None:
 
 
 def _ensure_majestic_launcher(config, result: DetectionResult, logger) -> None:
-    if result.majestic_exe is not None:
-        return
     result.majestic_exe = install_majestic_launcher(
         config, proton_path=result.proton_path, compatdata=result.compatdata_path, steam_root=result.steam_root, dry_run=config.dry_run, logger=logger
     )
@@ -83,10 +81,10 @@ def _prepare_prefix_and_launcher(context, logger, *, force: bool = False) -> Non
     config, result = context.config, context.result
     _require_launch_paths(result)
     _prepare_wine_drives(config, result, logger)
+    _ensure_majestic_launcher(config, result, logger)
     if not force and _setup_is_complete(config, result):
         logger.info("One-time setup already completed; skipping patch/setup steps")
         return
-    _ensure_majestic_launcher(config, result, logger)
     config.runtime_library_paths = prepare_proton_runtime_fixups(result.proton_path, dry_run=config.dry_run, logger=logger)
     if result.selected_platform == "egs":
         ensure_egs_launcher_symlink(result.gta_path, dry_run=config.dry_run, logger=logger)
@@ -233,7 +231,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     _require_launch_paths(result)
     if not _setup_is_complete(config, result):
         _prepare_prefix_and_launcher(context, logger)
-    _ensure_majestic_launcher(config, result, logger)
+    else:
+        _ensure_majestic_launcher(config, result, logger)
     config.runtime_library_paths = prepare_proton_runtime_fixups(result.proton_path, dry_run=config.dry_run, logger=logger)
     mapping = _prepare_wine_drives(config, result, logger)
     clear_caps_lock(dry_run=config.dry_run, logger=logger)
