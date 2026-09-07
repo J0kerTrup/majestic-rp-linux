@@ -224,7 +224,7 @@ def _doctor_problems(config, result) -> list[str]:
     if result.proton_path is not None and not result.proton_path.is_file():
         problems.append("Proton path exists but is not an executable file.")
     if result.majestic_exe is None:
-        installer = installer_target(config, result.compatdata_path) if result.compatdata_path else config.installer_path or "-"
+        installer = installer_target()
         print(f"Installer path:    {installer}")
         print(f"Installer URL:     {config.installer_url or '-'}")
         problems.append(

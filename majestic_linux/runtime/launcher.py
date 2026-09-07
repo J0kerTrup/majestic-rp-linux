@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import shlex
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -22,31 +24,82 @@ def _hash_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _request_headers() -> dict[str, str]:
+    return {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+
+
+def _installer_hash_url(installer_url: str) -> str:
+    return installer_url + ".sha256"
+
+
+def _read_local_hash(hash_file: Path) -> str:
+    if not hash_file.exists():
+        return ""
+    match = re.search(r"\b[0-9a-fA-F]{64}\b", hash_file.read_text(encoding="utf-8", errors="replace"))
+    return match.group(0).lower() if match else ""
+
+
+def _fetch_remote_hash(installer_url: str, logger: logging.Logger | None = None) -> str | None:
+    url = _installer_hash_url(installer_url)
+    req = urllib.request.Request(url, headers=_request_headers())
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            text = response.read(4096).decode("utf-8", errors="replace")
+    except (urllib.error.URLError, OSError) as exc:
+        if logger:
+            logger.warning("Could not fetch installer hash %s: %s", url, exc)
+        return None
+    match = re.search(r"\b[0-9a-fA-F]{64}\b", text)
+    if match:
+        return match.group(0).lower()
+    if logger:
+        logger.warning("Installer hash file has unexpected content: %r", text.strip()[:200])
+    return None
+
+
+def _download_installer(installer_url: str, target: Path, logger: logging.Logger | None = None) -> str:
+    if logger:
+        logger.info("Downloading Majestic installer: %s -> %s", installer_url, target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    req = urllib.request.Request(installer_url, headers=_request_headers())
+    tmp = target.with_suffix(".tmp")
+    with urllib.request.urlopen(req) as response, open(tmp, "wb") as out_file:
+        out_file.write(response.read())
+    new_hash = _hash_file(tmp)
+    tmp.replace(target)
+    hash_file = Path(str(target) + ".sha256")
+    hash_file.write_text(new_hash + "\n", encoding="utf-8")
+    return new_hash
+
+
 def ensure_installer(config: RunnerConfig, *, dry_run: bool, logger: logging.Logger | None = None) -> tuple[Path, bool]:
     target = installer_target()
     hash_file = Path(str(target) + ".sha256")
     if not config.installer_url:
         raise RunnerError("Majestic Launcher.exe is missing and MAJESTIC_INSTALLER_URL is empty")
-    if logger:
-        logger.info("Downloading Majestic installer: %s -> %s", config.installer_url, target)
     if dry_run:
         return target, True
-    target.parent.mkdir(parents=True, exist_ok=True)
-    req = urllib.request.Request(
-        config.installer_url,
-        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-    )
-    tmp = target.with_suffix(".tmp")
-    with urllib.request.urlopen(req) as response, open(tmp, 'wb') as out_file:
-        out_file.write(response.read())
-    new_hash = _hash_file(tmp)
-    old_hash = hash_file.read_text(encoding="utf-8").strip() if hash_file.exists() else ""
-    needs_install = new_hash != old_hash
-    if needs_install:
+    local_hash = _read_local_hash(hash_file)
+    remote_hash = _fetch_remote_hash(config.installer_url, logger=logger)
+    if remote_hash is None:
         if logger:
-            logger.info("Installer hash changed, will reinstall")
-    tmp.replace(target)
-    hash_file.write_text(new_hash, encoding="utf-8")
+            logger.info("Installer hash file is missing; auto-updating")
+        needs_install = True
+    elif local_hash != remote_hash:
+        if logger:
+            logger.info("Installer hash changed (%s -> %s), will reinstall", local_hash or "none", remote_hash)
+        needs_install = True
+    else:
+        needs_install = False
+        if target.exists():
+            if logger:
+                logger.info("Installer hash unchanged; using cached installer")
+            return target, False
+        if logger:
+            logger.info("Installer hash unchanged, but cached installer is missing; downloading")
+        _download_installer(config.installer_url, target, logger)
+        return target, False
+    _download_installer(config.installer_url, target, logger)
     return target, needs_install
 
 
