@@ -1,6 +1,6 @@
 # Majestic RP Linux Runner
 
-Installation guide: [INSTALL.md](INSTALL.md)
+Installation guide: [INSTALL.md](INSTALL.md) | [Steam Deck Guide](deck/STEAM-DECK-GUIDE.md) | [Rockstar Games Launcher Guide](deck/ROCKSTAR-LAUNCHER-GUIDE.md)
 
 Python runner for launching Majestic RP on Linux through Proton. It detects
 Steam, Proton, GTA V, compatdata/prefix, and Majestic Launcher, prepares the
@@ -35,6 +35,19 @@ chmod +x install-and-run-majestic-proton.sh
 ./install-and-run-majestic-proton.sh install
 ./install-and-run-majestic-proton.sh run
 ```
+
+### Steam Deck & Non-Steam (Rockstar Edition) Quick Start
+
+If you are playing on **Steam Deck** or using the **Rockstar Games Launcher (Social Club)** / non-Steam version of GTA V:
+
+```bash
+chmod +x deck-setup.sh start-majestic-deck.sh
+./deck-setup.sh 1
+```
+
+See the dedicated guides for full walkthroughs:
+* 🎮 [Steam Deck Guide](deck/STEAM-DECK-GUIDE.md)
+* 🏢 [Rockstar Games Launcher / Social Club Guide](deck/ROCKSTAR-LAUNCHER-GUIDE.md)
 
 The shell wrapper is intentionally small. It only calls:
 

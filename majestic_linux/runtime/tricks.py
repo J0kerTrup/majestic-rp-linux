@@ -152,7 +152,8 @@ def _reg_section_is_win10(text: str, section: str) -> bool:
         return False
     next_section = text.find("\n[", start + len(marker))
     block = text[start:] if next_section < 0 else text[start:next_section]
-    return '"ProductName"="Microsoft Windows 10"' in block and '"CurrentMajorVersionNumber"=dword:0000000a' in block
+    has_win10 = '"ProductName"="Microsoft Windows 10"' in block or '"ProductName"="Windows 10' in block
+    return has_win10 and '"CurrentMajorVersionNumber"=dword:0000000a' in block
 
 
 def _sanitize_fontconfig_env(env: dict[str, str]) -> None:
