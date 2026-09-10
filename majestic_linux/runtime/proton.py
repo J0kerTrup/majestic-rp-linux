@@ -57,6 +57,7 @@ def build_proton_command(
             "DISABLE_CEF_GPU": "1" if config.disable_cef_gpu else "0",
             "PROTON_USE_XALIA": "0",
             "DXVK_STATE_CACHE": "1",
+            "DXVK_CONFIG_FILE": str(wine_mapping.gta_path / "dxvk.conf"),
             "GAME_WIDTH": str(config.game_width),
             "GAME_HEIGHT": str(config.game_height),
             "GAME_WINDOWED": "1" if config.game_windowed else "0",
@@ -66,7 +67,7 @@ def build_proton_command(
     if platform == "steam":
         env["SteamAppId"] = app_id
         env["SteamGameId"] = app_id
-    if config.steam_overlay:
+    if config.steam_overlay and platform == "steam":
         apply_steam_overlay(env, steam_root, app_id)
     if config.disable_cef_gpu:
         env.setdefault("CEF_DISABLE_GPU", "1")
@@ -96,7 +97,14 @@ def _steam_app_id(config: RunnerConfig) -> str:
 
 def _sanitize_host_launcher_env(env: dict[str, str]) -> None:
     for key in list(env):
-        if key.startswith(("CODEX_", "VSCODE_", "ELECTRON_")) or key in {"NODE_OPTIONS", "SteamAppId", "SteamGameId"}:
+        if key.startswith(("CODEX_", "VSCODE_", "ELECTRON_")) or key in {
+            "NODE_OPTIONS",
+            "SteamAppId",
+            "SteamGameId",
+            "SteamOverlayGameId",
+            "SteamClientLaunch",
+            "SteamEnv",
+        }:
             env.pop(key, None)
 
 
@@ -104,6 +112,18 @@ def apply_launch_options(command: list[str], env: dict[str, str], launch_options
     options = shlex.split(launch_options or "")
     if not options:
         return command
+    # Bare application flags belong after the application, not in argv[0].
+    # Preserve wrapper syntax (e.g. gamescope %command%) and env assignments.
+    if "%command%" not in options:
+        flags = []
+        for item in options:
+            if not flags and _looks_like_env_assignment(item):
+                key, value = item.split("=", 1)
+                env[key] = value
+            else:
+                flags.append(item)
+        if not flags or flags[0].startswith("-"):
+            return [*command, *flags]
     result: list[str] = []
     command_inserted = False
     for item in options:

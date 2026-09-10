@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import shlex
 import subprocess
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -35,8 +37,22 @@ def ensure_installer(config: RunnerConfig, compatdata: Path, *, dry_run: bool, l
         config.installer_url,
         headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     )
-    with urllib.request.urlopen(req) as response, open(target, 'wb') as out_file:
-        out_file.write(response.read())
+    fd, temporary = tempfile.mkstemp(prefix='.majestic-download-', dir=target.parent)
+    try:
+        with os.fdopen(fd, 'wb') as out_file, urllib.request.urlopen(req, timeout=30) as response:
+            size = 0
+            while chunk := response.read(1024 * 1024):
+                out_file.write(chunk)
+                size += len(chunk)
+            expected = response.headers.get('Content-Length')
+            if not size or (expected is not None and size != int(expected)):
+                raise RunnerError('Majestic installer download is empty or incomplete; retry installation')
+            out_file.flush()
+            os.fsync(out_file.fileno())
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
     return target
 
 
